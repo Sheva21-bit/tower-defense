@@ -19,18 +19,82 @@ const ASSET_MANIFEST = {
   // feet at bottom-centre of each frame. Enemy side is mirrored in code.
   // Team colour: either per-team files (<unitId>_<anim>_blue.png / _red.png) or a base file
   // with pure magenta #FF00FF areas that get recoloured to the team colour at load time.
-  //   fps: number  -> fixed frame rate
+  // FRAME COUNTS COME FROM THE SHEET: frames = image width / frame width (frame width = the
+  // unit's frame size x the sheet's scale, i.e. image height / frameH), counted at load time
+  // for every animation, so a new strip with more or fewer frames needs no code change.
+  // `frames` below is only the spec: a different count is logged as a note (ART.store.notes),
+  // and it's used as a fallback only if the width isn't a multiple of the frame width.
+  //   frameMs: number -> ms per frame (walk: at ANIM.walk.refSpeedGrids, scaled to actual speed)
   //   fps: 'cooldown' -> the whole strip plays once per attack, over the unit's cooldownSec
   // Frame size by class (square); SSR units are SSR_SIZE_BONUS px larger.
   SPRITE_SIZE_BY_CLASS: { ranger: 40, striker: 48, defender: 56 },
   SSR_SIZE_BONUS: 8,
   CHARACTERS: {},   // filled from CONFIG.UNIT_TYPES below: { prefix, frameW, frameH, recolor }
   CHARACTER_ANIMS: {
-    walk:    { frames: 6, fps: 10,         loop: true  },  // idle = walk frame 0
-    attack:  { frames: 4, fps: 'cooldown', loop: true  },
-    death:   { frames: 4, fps: 8,          loop: false },  // plays once, then the body is removed
-    ability: { frames: 6, fps: 12,         loop: false },  // optional (SR/SSR): plays once on ability use
-    endure:  { frames: 4, fps: 8,          loop: false, onlyAbility: 'endure' },  // Brawn's Endure: 0 lift, 1 slam, 2-3 braced loop
+    walk:    { frames: 8, frameMs: 110,     loop: true  },  // idle = walk frame 0 (Mia: 8 frames at ~110 ms; 6-frame strips still work)
+    attack:  { frames: 4, fps: 'cooldown', loop: true  },  // spread over the attack interval; hit on hitFrame (config)
+    death:   { frames: 4, frameMs: 125,     loop: false },  // plays once, holds the last frame, fades (ANIM.death)
+    ability: { frames: 6, frameMs: 83,      loop: false },  // optional (SR/SSR): plays once on ability use
+    endure:  { frames: 4, frameMs: 125,     loop: false, onlyAbility: 'endure' },  // Brawn's Endure: 0 lift, 1 slam, 2-3 braced loop
+  },
+  // Code-side animation tuning (same for every unit; the only per-unit art value is hitFrame in config.js).
+  ANIM: {
+    walk: {
+      refSpeedGrids: 2.5,   // walk plays at frameMs per frame when moving this fast (grids/s) ...
+      refFrameW: 64,        // ... at this frame size (stride scales with sprite size: 48 px steps faster, 80 px slower)
+      minRate: 0.6,         // playback-rate clamp (x frameMs) while moving
+      maxRate: 1.6,
+      chargeMaxRate: 2.5,   // charges (Grey's Shield Bash) may stride faster
+      stopSpeed: 0.15,      // below this actual speed (grids/s) the unit counts as stopped (blocked / held)
+      speedSmoothSec: 0.05, // smoothing of the measured speed (frame-rate independent)
+      settleSec: 0.25,      // stopping: finish the stride forward to frame 0 within ~this long (no freeze mid-stride)
+    },
+    death: { holdSec: 0.35, fadeSec: 0.45 },   // after the last death frame: hold, then fade out
+    pos: {
+      hysteresisPx: 1.0,    // integer-pixel snap: reversing direction needs a full px of drift (sub-pixel wobble never flickers)
+      jumpGridsPerSec: 40,  // a position change faster than this is a jump: smoothed instead of popping
+      jumpSmoothSec: 0.08,  // time constant for smoothing such jumps (frame-rate independent)
+    },
+  },
+  // Which way each sheet is drawn ('right' | 'left'; anything not listed = 'right'). Audited 2026-10-08 by
+  // looking at every frame: all current character strips and directional FX face RIGHT. A sheet drawn
+  // facing left just gets 'left' here; game.js flips it at draw time so every unit faces its attack
+  // direction (player units toward the enemy tower, enemy units toward the player tower).
+  FACES: {
+    // characters (weapon / face / attack lunge all point right; checked per frame, death recoil frames too)
+    'darkelf_common_defender_attack.png': 'right', 'darkelf_common_defender_death.png': 'right', 'darkelf_common_defender_walk.png': 'right',
+    'darkelf_common_ranger_attack.png': 'right', 'darkelf_common_ranger_death.png': 'right', 'darkelf_common_ranger_walk.png': 'right',
+    'darkelf_common_striker_attack.png': 'right', 'darkelf_common_striker_death.png': 'right', 'darkelf_common_striker_walk.png': 'right',
+    'darkelf_defender_attack.png': 'right', 'darkelf_defender_death.png': 'right', 'darkelf_defender_walk.png': 'right',
+    'darkelf_ranger_attack.png': 'right', 'darkelf_ranger_death.png': 'right', 'darkelf_ranger_walk.png': 'right',
+    'darkelf_ssr_defender_attack.png': 'right', 'darkelf_ssr_defender_death.png': 'right', 'darkelf_ssr_defender_walk.png': 'right',
+    'darkelf_ssr_ranger_attack.png': 'right', 'darkelf_ssr_ranger_death.png': 'right', 'darkelf_ssr_ranger_walk.png': 'right',
+    'darkelf_ssr_striker_attack.png': 'right', 'darkelf_ssr_striker_death.png': 'right', 'darkelf_ssr_striker_walk.png': 'right',
+    'darkelf_striker_attack.png': 'right', 'darkelf_striker_death.png': 'right', 'darkelf_striker_walk.png': 'right',
+    'deva_defender_attack.png': 'right', 'deva_defender_death.png': 'right', 'deva_defender_endure.png': 'right',
+    'deva_defender_walk.png': 'right', 'deva_ranger_attack.png': 'right', 'deva_ranger_death.png': 'right',
+    'deva_ranger_walk.png': 'right', 'deva_raven_attack.png': 'right', 'deva_raven_death.png': 'right',
+    'deva_raven_walk.png': 'right', 'elf_common_defender_attack.png': 'right', 'elf_common_defender_death.png': 'right',
+    'elf_common_defender_walk.png': 'right', 'elf_common_ranger_attack.png': 'right', 'elf_common_ranger_death.png': 'right',
+    'elf_common_ranger_walk.png': 'right', 'elf_common_striker_attack.png': 'right', 'elf_common_striker_death.png': 'right',
+    'elf_common_striker_walk.png': 'right', 'elf_defender_attack.png': 'right', 'elf_defender_death.png': 'right',
+    'elf_defender_walk.png': 'right', 'elf_ranger_attack.png': 'right', 'elf_ranger_death.png': 'right',
+    'elf_ranger_walk.png': 'right', 'elf_ssr_defender_attack.png': 'right', 'elf_ssr_defender_death.png': 'right',
+    'elf_ssr_defender_walk.png': 'right', 'elf_ssr_ranger_attack.png': 'right', 'elf_ssr_ranger_death.png': 'right',
+    'elf_ssr_ranger_walk.png': 'right', 'elf_ssr_striker_attack.png': 'right', 'elf_ssr_striker_death.png': 'right',
+    'elf_ssr_striker_walk.png': 'right', 'elf_striker_attack.png': 'right', 'elf_striker_death.png': 'right',
+    'elf_striker_walk.png': 'right', 'valkyrie_defender_attack.png': 'right', 'valkyrie_defender_death.png': 'right',
+    'valkyrie_defender_walk.png': 'right', 'valkyrie_dia_attack.png': 'right', 'valkyrie_dia_death.png': 'right',
+    'valkyrie_dia_walk.png': 'right', 'valkyrie_ranger_attack.png': 'right', 'valkyrie_ranger_death.png': 'right',
+    'valkyrie_ranger_walk.png': 'right',
+    // FX: directional ones are drawn for a right-facing / right-moving user (arrow tip right, trail fades left,
+    // dash lines behind a right-mover, impact / knock rings push right); the rest are symmetric
+    'fx_arrow.png': 'right', 'fx_arrow_trail.png': 'right', 'fx_bubble.png': 'right',
+    'fx_bubble_pop.png': 'right', 'fx_bubble_trap.png': 'right', 'fx_dark_cloud.png': 'right',
+    'fx_endure_guard.png': 'right', 'fx_endure_knock.png': 'right', 'fx_endure_slam.png': 'right',
+    'fx_lifesteal_mark.png': 'right', 'fx_lifesteal_wisp.png': 'right', 'fx_nimble_shot.png': 'right',
+    'fx_rally.png': 'right', 'fx_rally_buff.png': 'right', 'fx_shield_bash_dash.png': 'right',
+    'fx_shield_bash_impact.png': 'right',
   },
   TEAM_SUFFIX: { player: 'blue', enemy: 'red' },
   RECOLOR_KEY: [255, 0, 255],   // pure magenta
@@ -154,6 +218,9 @@ const ART = (function () {
     ui: {},
     fx: {},
     warnings: [],
+    notes: [],               // info: sheet frame count differs from the spec (the sheet is used)
+    frameCounts: {},         // file -> { frames, srcW, width, height, how: 'sheet' | 'fallback' }
+    facing: {},              // file -> { faces: 'right' | 'left', how: 'pixels' | 'manifest', same, mirrored, declared }
   };
 
   // ---------- low-level loading ----------
@@ -284,6 +351,24 @@ const ART = (function () {
     }
   }
 
+  // ---------- frame counting ----------
+  /**
+   * Frame count of a horizontal strip, from the sheet itself: floor(naturalWidth / frame width), min 1,
+   * where frame width = frameW x the sheet's scale (naturalHeight / frameH; 2 for a 2x delivery).
+   * Until the image has loaded (naturalWidth 0) the spec count is the fallback (never 0 / NaN).
+   * Returns { frames, srcW, how: 'sheet' | 'fallback', exact, natW, natH }.
+   */
+  function countFrames(img, frameW, frameH, specFrames) {
+    const loaded = !!(img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0 && frameW > 0 && frameH > 0);
+    if (!loaded) {
+      return { frames: Math.max(1, specFrames | 0), srcW: frameW > 0 ? frameW : 1, how: 'fallback', exact: false, natW: 0, natH: 0 };
+    }
+    const srcW = frameW * (img.naturalHeight / frameH);
+    const frames = Math.max(1, Math.floor(img.naturalWidth / srcW + 1e-9));
+    const exact = Math.abs(img.naturalWidth / srcW - Math.round(img.naturalWidth / srcW)) < 1e-9 && Math.round(img.naturalWidth / srcW) >= 1;
+    return { frames, srcW, how: 'sheet', exact, natW: img.naturalWidth, natH: img.naturalHeight };
+  }
+
   // ---------- sprite construction ----------
   /**
    * Build a sprite descriptor from a loaded strip.
@@ -292,15 +377,12 @@ const ART = (function () {
    *       'outline' -> could not recolour: tinted sprite + team-colour outline
    */
   function buildSprite(img, src, def, animDef, mode, teamColor) {
-    const scale = img.height / def.frameH;           // 1 normally, 2 if delivered at 2x
-    const srcW = def.frameW * scale;
-    const frames = Math.max(1, Math.round(img.width / srcW));
-    if (Math.abs(frames * srcW - img.width) > 0.5) {
-      store.warnings.push(`${src}: width ${img.width} is not a multiple of frame width ${srcW}`);
-    }
-    if (frames !== animDef.frames) {
-      store.warnings.push(`${src}: ${frames} frames (spec says ${animDef.frames}) — using ${frames}`);
-    }
+    const fc = countFrames(img, def.frameW, def.frameH, animDef.frames);
+    const { frames, srcW, how, natW, natH } = fc;
+    if (how === 'fallback') store.warnings.push(`${src}: not loaded yet (naturalWidth 0); using the spec's ${frames} frames`);
+    else if (!fc.exact) store.warnings.push(`${src}: width ${natW} is not an exact multiple of frame width ${srcW}; using ${frames} frames`);
+    else if (animDef.frames && frames !== animDef.frames) store.notes.push(`${src}: ${frames} frames from the sheet (spec ${animDef.frames})`);   // info only: the sheet wins
+    store.frameCounts[src] = { frames, srcW, width: natW, height: natH, how };
     let canvasOrImg = img;
     let outline = null;
     if (mode === 'recolor') {
@@ -317,12 +399,76 @@ const ART = (function () {
       image: canvasOrImg,
       outline,                                  // team-colour silhouette (outline mode only)
       flash: silhouette(img, '#ffffff'),        // white silhouette for hit flash
-      srcW, srcH: img.height,
+      faces: (M.FACES[src] === 'left' ? 'left' : 'right'),   // how the sheet is drawn (default right)
+      srcW, srcH: natH || def.frameH,
       frameW: def.frameW, frameH: def.frameH,   // draw size
       frames,
-      fps: animDef.fps,
+      frameMs: animDef.frameMs || null,
+      fps: animDef.frameMs ? 1000 / animDef.frameMs : animDef.fps,   // legacy alias
       loop: animDef.loop,
     };
+  }
+
+  // ---------- facing from the pixels (load time, never cached across loads) ----------
+  const FACE_MARGIN = 0.12;   // silhouette IoU margin needed to call a strip mirrored / not mirrored
+  /** Alpha mask of frame 0 of a strip, shifted so its horizontal centre of mass is mid-frame. null if unreadable. */
+  function frame0Mask(img, fw, fh) {
+    try {
+      const W = Math.round(fw), H = Math.round(fh);
+      const c = makeCanvas(W, H), g = c.getContext('2d', { willReadFrequently: true });
+      g.drawImage(img, 0, 0, W, H, 0, 0, W, H);
+      const d = g.getImageData(0, 0, W, H).data;
+      const m = new Uint8Array(W * H); let sx = 0, n = 0;
+      for (let i = 0; i < W * H; i++) if (d[i * 4 + 3] > 0) { m[i] = 1; sx += i % W; n++; }
+      if (!n) return null;
+      const shift = Math.round(W / 2 - sx / n), out = new Uint8Array(W * H);
+      for (let i = 0; i < W * H; i++) if (m[i]) { const x = (i % W) + shift; if (x >= 0 && x < W) out[i - (i % W) + x] = 1; }
+      return { m: out, W, H };
+    } catch (e) { return null; }   // tainted canvas (file://): fall back to the manifest
+  }
+  function maskIoU(a, b, mirror) {
+    let inter = 0, uni = 0;
+    for (let y = 0; y < a.H; y++) for (let x = 0; x < a.W; x++) {
+      const va = a.m[y * a.W + x], vb = b.m[y * b.W + (mirror ? b.W - 1 - x : x)];
+      if (va && vb) inter++; if (va || vb) uni++;
+    }
+    return uni ? inter / uni : 0;
+  }
+  /**
+   * Decide which way each strip of a character is drawn, from the CURRENT pixels: the attack strip
+   * (manifest value, default right; its lunge confirms it) is the anchor, and every other strip's
+   * frame 0 is compared with attack frame 0 as drawn and mirrored. A clear mirror match means the
+   * strip faces the other way: it's flipped at draw time and a loud warning is logged. Ambiguous ->
+   * the manifest value. Results: store.facing[file] = { faces, how, same, mirrored, declared }.
+   */
+  function detectFacing(def, out) {
+    const declared = (f) => (M.FACES[f] === 'left' ? 'left' : 'right');
+    const atkFile = `${def.prefix}_attack.png`, atkImg = store.images[atkFile];
+    const setFaces = (anim, faces) => { for (const t of ['player', 'enemy']) if (out[t][anim]) out[t][anim].faces = faces; };
+    const ref = atkImg ? frame0Mask(atkImg, def.frameW * atkImg.naturalHeight / def.frameH, atkImg.naturalHeight) : null;
+    const atkFaces = declared(atkFile);
+    if (atkImg) store.facing[atkFile] = { faces: atkFaces, how: 'manifest (anchor)', declared: atkFaces };
+    for (const anim of Object.keys(M.CHARACTER_ANIMS)) {
+      if (anim === 'attack') continue;
+      const file = `${def.prefix}_${anim}.png`, img = store.images[file];
+      if (!img || !(out.player[anim] || out.enemy[anim])) continue;
+      const decl = declared(file);
+      let faces = decl, how = 'manifest', same = null, mirrored = null;
+      const m = ref && frame0Mask(img, def.frameW * img.naturalHeight / def.frameH, img.naturalHeight);
+      if (m && m.W === ref.W && m.H === ref.H) {
+        same = +maskIoU(m, ref, false).toFixed(3); mirrored = +maskIoU(m, ref, true).toFixed(3);
+        if (mirrored - same >= FACE_MARGIN) { faces = atkFaces === 'right' ? 'left' : 'right'; how = 'pixels'; }
+        else if (same - mirrored >= FACE_MARGIN) { faces = atkFaces; how = 'pixels'; }
+      }
+      if (faces !== decl) {
+        store.warnings.push(`FACING: ${file} is drawn facing ${faces.toUpperCase()} but ${atkFile} faces ${atkFaces.toUpperCase()} ` +
+          `(frame 0 silhouette matches the attack ${mirrored} mirrored vs ${same} as drawn); flipping it at draw time. ` +
+          `Ask the artist to mirror it, or record it in ASSET_MANIFEST.FACES.`);
+      }
+      store.facing[file] = { faces, how, same, mirrored, declared: decl };
+      setFaces(anim, faces);
+    }
+    setFaces('attack', atkFaces);
   }
 
   async function loadCharacter(charId, def, teamColors) {
@@ -350,6 +496,7 @@ const ART = (function () {
         else out[team][anim] = null;
       }
     }
+    detectFacing(def, out);
     return out;
   }
 
@@ -377,11 +524,15 @@ const ART = (function () {
     }
     for (const [key, def] of Object.entries(M.FX)) {
       jobs.push(loadImage(def.file).then((img) => {
-        store.fx[key] = img ? {
-          img, srcW: img.height * def.w / def.h,
-          frames: Math.max(1, Math.round(img.width / (img.height * def.w / def.h))),
+        const ok = !!(img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0);
+        const fsrcW = ok ? img.naturalHeight * def.w / def.h : 0;
+        store.fx[key] = ok ? {
+          img, faces: (M.FACES[def.file] === 'left' ? 'left' : 'right'), srcW: fsrcW,
+          frames: Math.max(1, Math.floor(img.naturalWidth / fsrcW + 1e-6)),   // from the sheet, min 1
           w: def.w, h: def.h, fps: def.fps,
         } : null;
+        if (ok && Math.abs(img.naturalWidth / fsrcW - Math.round(img.naturalWidth / fsrcW)) > 1e-6) store.warnings.push(`${def.file}: width ${img.naturalWidth} is not an exact multiple of frame width ${fsrcW}`);
+        if (ok) store.frameCounts[def.file] = { frames: store.fx[key].frames, srcW: fsrcW, width: img.naturalWidth, height: img.naturalHeight, how: 'sheet' };
       }));
     }
     await Promise.all(jobs);
@@ -390,6 +541,7 @@ const ART = (function () {
     const loaded = Object.entries(store.images).filter(([, v]) => v).map(([k]) => k);
     if (loaded.length) console.info(`[art] loaded ${loaded.length} image(s): ${loaded.join(', ')}`);
     for (const w of store.warnings) console.warn('[art] ' + w);
+    if (store.notes.length) console.info('[art] frame counts from the sheets: ' + store.notes.join('; '));
     return store;
   }
 
@@ -397,6 +549,7 @@ const ART = (function () {
     manifest: M,
     store,
     loadAll,
+    countFrames,   // exposed for tests: countFrames(img, frameW, frameH, specFrames)
     /** Sprite for a character animation, or null. */
     sprite(charId, team, anim) {
       const c = store.chars[charId];

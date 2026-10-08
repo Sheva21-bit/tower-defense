@@ -98,8 +98,25 @@ knockback), Hera (Valkyries); Raven, Brawn (Endure), Pela (Deva).
   the placeholder drawing for just that element, so art can arrive piece by piece.
 - Characters: `<unitId>_walk.png`, `<unitId>_attack.png`, `<unitId>_death.png` (+ optional `<unitId>_ability.png`) horizontal strips,
   facing right, feet at bottom-centre. Enemy side is mirrored automatically.
-  - Walk loops at 10 fps. Attack plays once per attack, stretched over the unit's cooldown.
-    Death plays at 8 fps, then the body is removed (death is visual only).
+  - Frame counts come from the sheets (width / frame width) for every animation, so new strips need no code change.
+  - Animation is elapsed-time based (visual only, never read by the sim; tuning in `ASSET_MANIFEST.ANIM`):
+    walk ~110 ms/frame at 2.5 grids/s for a 64 px sprite, scaled to each unit's ACTUAL speed (rally buff, blocked
+    queues, ZoC holds and knockbacks don't foot-slide), clamped 0.6x-1.6x; each unit starts at its own phase; a unit
+    that stops finishes its stride to frame 0 instead of freezing. Attack plays once per attack over the attack
+    interval with `hitFrame` (config) on the hit. Death plays once, holds, then fades.
+  - Units render at one integer x per frame (sprite, bars, icons, FX together) with 1 px hysteresis, so nothing shimmers.
+  - Facing (`faceOf` in `game.js`): a unit faces its live target, else the enemy tower (player side right, enemy side
+    left; a side swap only swaps factions, so the same rule holds). It keeps that facing while walking, attacking,
+    holding in ZoC, idling, stunned/trapped, charging, enduring, dying (the corpse keeps it), and while being knocked
+    back or hopping back (Raven's Dark Cloud): those slide backwards facing the enemy and show the idle pose, because the
+    stride only plays when the unit moves forward. Arrows spawn on the side of the target and fly toward it, so a
+    ranger whose target is behind it turns round and shoots backwards (`pickTarget` uses absolute distance, so a foe that
+    gets past can be picked; in normal play this never happened in 3x40 s test battles).
+  - Drawn direction per sheet: `ASSET_MANIFEST.FACES` (default `'right'`), flipped at draw time by `flipX(sheet, face)`.
+    At load every strip's frame 0 is also compared with the unit's attack frame 0, both as drawn and mirrored
+    (silhouette IoU, margin 0.12). A strip that is clearly mirrored relative to the attack is flipped and logged as a
+    loud `FACING:` warning, so a strip delivered facing the wrong way still renders correctly. The check reads the
+    current pixels on every load and caches nothing.
   - Team colour: per-team files `<unitId>_<anim>_blue.png` / `_red.png` win if present;
     otherwise the base file's pure magenta pixels
     are recoloured to blue (#3d7bd9) / red (#d9443d).

@@ -171,8 +171,9 @@
       depth: (nextUnitId % 4) * 6, // small vertical offset so stacked units stay visible (visual)
       flash: 0,                  // hit flash timer (visual)
       castT: 0,                  // visual: ability pose timer
-      bornAt: state.time,        // visual: walk-cycle phase
+      bornAt: state.time,        // visual: spawn time
     };
+    unit.anim = newAnim(unit);   // visual only: walk phase, measured speed, integer render x (animateUnits)
     state.units.push(unit);
     state.stats.spawned[t.id] = (state.stats.spawned[t.id] || 0) + 1;
     return unit;
@@ -265,7 +266,16 @@
   // ------------------------------------------------------------------
   // Combat helpers (also the API handed to abilities.js)
   // ------------------------------------------------------------------
-  const dirOf = (u) => TEAM[u.team].dir;
+  const dirOf = (u) => TEAM[u.team].dir;   // walking / attack direction of the side (+1 right, -1 left)
+  /** Facing (visual + shot origin): toward the current live target, else toward the enemy tower.
+   *  pickTarget picks the nearest foe in range on EITHER side, so a foe behind would turn the unit. */
+  function faceOf(u) {
+    const t = u.target;
+    if (t && t.hp > 0 && Math.abs(t.x - u.x) > 1e-6) return t.x > u.x ? 1 : -1;
+    return dirOf(u);
+  }
+  /** Draw-time flip for a sheet: mirror when the wanted direction differs from how the sheet is drawn. */
+  const flipX = (sheet, dir) => (dir < 0) !== (!!sheet && sheet.faces === 'left');
   const foeTeamOf = (u) => (u.team === 'player' ? 'enemy' : 'player');
   const dist = (a, b) => Math.abs(a.x - b.x);
   const ahead = (u, o) => (o.x - u.x) * dirOf(u);
@@ -727,8 +737,9 @@
   function fireProjectile(u, target, damage) {
     const style = u.type.projectile || 'arrow';
     const ps = (C.PROJECTILES && C.PROJECTILES[style]) || {};
+    const fdir = target && Math.abs(target.x - u.x) > 1e-6 ? (target.x > u.x ? 1 : -1) : dirOf(u);   // toward what it shoots
     state.projectiles.push({
-      team: u.team, x: u.x + dirOf(u) * 0.5, depth: u.depth,
+      team: u.team, x: u.x + fdir * 0.5, dir: fdir, depth: u.depth,
       target: target || null, towerTeam: target ? null : foeTeamOf(u),
       damage, speed: ps.speedGrids || u.type.projectileSpeedGrids || 40, source: u,
       style, born: state.time, onHit: u.type.onHit,
@@ -969,7 +980,7 @@
     // Visual only: dead units with a death animation leave a corpse that plays it out.
     for (const u of state.units) {
       if (u.hp <= 0 && ART.sprite(u.type.id, u.team, 'walk') && ART.sprite(u.type.id, u.team, 'death')) {
-        state.corpses.push({ type: u.type, team: u.team, x: u.x, depth: u.depth, t: 0 });
+        state.corpses.push({ type: u.type, team: u.team, x: u.x, px: u.anim ? u.anim.px : Math.round(gridToPx(u.x)), face: faceOf(u), depth: u.depth, t: 0 });
       }
     }
 
@@ -989,7 +1000,7 @@
     for (const c of state.corpses) c.t += dt;
     state.corpses = state.corpses.filter((c) => {
       const spr = ART.sprite(c.type.id, c.team, 'death');
-      return spr && c.t < spr.frames / spr.fps;
+      return spr && c.t < deathTimes(spr).end;
     });
     for (const e of state.effects) e.t += dt;
     state.effects = state.effects.filter((e) => e.t < e.dur);
@@ -1126,6 +1137,102 @@
     ctx.fillText(TEAM[team].name.toUpperCase(), x + tw / 2, y + 20);
   }
 
+  // ---------------- Animation (visual only; never read by the simulation) ----------------
+  // Timing is elapsed-time based and the same for every unit; frame counts come from the
+  // sheets (assets.js). Tuning: ASSET_MANIFEST.ANIM. The only per-unit value is hitFrame.
+  const ANIM = AM.ANIM || {};
+  const AW = Object.assign({ refSpeedGrids: 2.5, refFrameW: 64, minRate: 0.6, maxRate: 1.6, chargeMaxRate: 2.5,
+    stopSpeed: 0.15, speedSmoothSec: 0.05, settleSec: 0.25 }, ANIM.walk);
+  const AD = Object.assign({ holdSec: 0.35, fadeSec: 0.45 }, ANIM.death);
+  const APOS = Object.assign({ hysteresisPx: 1.0, jumpGridsPerSec: 40, jumpSmoothSec: 0.08 }, ANIM.pos);
+  const animMs = (anim, fallback) => ((AM.CHARACTER_ANIMS[anim] && AM.CHARACTER_ANIMS[anim].frameMs) || fallback) / 1000;
+  const WALK_SEC = animMs('walk', 110);
+  const clampN = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+  /** Fresh per-unit animation state. Start phase: golden-ratio sequence on the unit id, so a group
+   *  spawned together doesn't walk in lockstep (reproducible, no Math.random). */
+  function newAnim(u) {
+    const phase = (u.id * 0.6180339887498949) % 1;
+    return { phase, lastX: u.x, rx: u.x, off: 0, speed: 0, px: Math.round(gridToPx(u.x)), pdir: 0, moving: false };
+  }
+  /** Re-sync after a position change made outside the loop (tests / sandbox placing units). */
+  function syncAnim(u) {
+    const a = u.anim || (u.anim = newAnim(u));
+    a.lastX = a.rx = u.x; a.off = 0; a.px = Math.round(gridToPx(u.x)); a.pdir = 0;
+    return a;
+  }
+
+  /**
+   * Per-frame animation update, once per rendered frame with the real elapsed time (not per sim tick):
+   * - measures each unit's ACTUAL speed (so Rallying Charge, blocked queues, ZoC holds and knockbacks
+   *   never foot-slide) and advances its walk phase by it: frameMs per frame at AW.refSpeedGrids for
+   *   a refFrameW sprite, clamped to [minRate, maxRate];
+   * - stopped (in range, held, stunned...): finishes the stride forward to frame 0 within ~settleSec
+   *   instead of freezing mid-stride; the phase then continues from there when it walks again;
+   * - render x: position jumps faster than any real move are eased in (frame-rate independent), and
+   *   the integer pixel only reverses direction after hysteresisPx of drift (no 1 px shimmer).
+   */
+  function animateUnits(dt) {
+    if (!(dt > 0)) return;
+    const kSpeed = 1 - Math.exp(-dt / AW.speedSmoothSec);
+    const kJump = Math.exp(-dt / APOS.jumpSmoothSec);
+    for (const u of state.units) {
+      if (u.hp <= 0) continue;
+      const a = u.anim || (u.anim = newAnim(u));
+      const dx = u.x - a.lastX;
+      a.lastX = u.x;
+      const inst = Math.abs(dx) / dt;
+      const jump = inst > APOS.jumpGridsPerSec;
+      if (jump) a.off -= dx;                       // keep the visual where it was ...
+      a.off *= kJump;                              // ... and ease it to the real position
+      if (Math.abs(a.off) < 1e-3) a.off = 0;
+      a.rx = u.x + a.off;
+      a.vel = (a.vel || 0) + ((jump ? 0 : dx / dt) - (a.vel || 0)) * kSpeed;   // signed, smoothed
+      a.speed = Math.abs(a.vel);
+      // integer render pixel with hysteresis
+      const tx = gridToPx(a.rx);
+      const d = tx - a.px;
+      const need = Math.sign(d) === a.pdir ? 0.5 : APOS.hysteresisPx;
+      if (Math.abs(d) >= need) {
+        const np = Math.round(tx);
+        if (np !== a.px) { a.pdir = Math.sign(np - a.px); a.px = np; }
+      }
+      // walk phase (fraction of the cycle, so it survives a strip with a different frame count)
+      const walk = ART.sprite(u.type.id, u.team, 'walk');
+      const n = walk ? walk.frames : 8;
+      const fw = walk ? walk.frameW : (u.type.sizePx || AW.refFrameW);
+      // Only stride when moving the way it faces: knockbacks and Raven's hop back slide backwards
+      // while the unit keeps facing the enemy (no walking-backwards cycle).
+      const movingState = !!(u.state === 'walk' || u.state === 'charge' || u.charge || u.hop) && !u.knock;
+      a.moving = movingState && a.speed > AW.stopSpeed && a.vel * faceOf(u) > 0;
+      if (a.moving) {
+        const rate = clampN((a.speed / AW.refSpeedGrids) * (AW.refFrameW / fw), AW.minRate, u.charge ? AW.chargeMaxRate : AW.maxRate);
+        a.rate = rate;
+        a.phase = (a.phase + dt * rate / (WALK_SEC * n)) % 1;
+      } else {
+        a.rate = 0;
+        const f = a.phase * n;
+        if (f < 1) a.phase = 0;                    // already showing frame 0
+        else {                                     // finish the stride forward to frame 0
+          const rate = Math.max(2, (n - f) * WALK_SEC / AW.settleSec);
+          const nf = f + dt * rate / WALK_SEC;
+          a.phase = nf >= n ? 0 : nf / n;
+        }
+      }
+    }
+  }
+  /** Current walk-strip frame from the unit's phase. */
+  function walkFrame(u, walk) {
+    const a = u.anim;
+    if (!a || !Number.isFinite(a.phase)) { if (a) a.phase = 0; return 0; }
+    return safeFrame(walk, a.phase * walk.frames + 1e-9);
+  }
+  /** Integer render x of a unit (shared by sprite, bars, icons and FX so they never drift apart). */
+  function unitPx(u) {
+    const a = u.anim && u.anim.lastX === u.x ? u.anim : syncAnim(u);
+    return a.px;
+  }
+
   // ---------------- Characters ----------------
   /** Which sprite strip + frame a unit shows right now, or null -> placeholder drawing. */
   function unitFrame(u) {
@@ -1139,18 +1246,20 @@
         return { spr: en, frame: f };
       }
     }
-    if (state.over || u.state === 'stunned' || u.state === 'trapped' || u.knock) return { spr: walk, frame: 0 };   // idle = walk frame 0 (knocked back: wind-up interrupted)
-    if (u.charge) return { spr: walk, frame: Math.floor(state.time * walk.fps * 2.5) % walk.frames };   // charging: fast stride
+    // Idle-ish states settle smoothly to walk frame 0 (animateUnits) instead of snapping / freezing mid-stride.
+    if (state.over || u.state === 'stunned' || u.state === 'trapped' || u.knock) return { spr: walk, frame: walkFrame(u, walk) };
+    if (u.charge) return { spr: walk, frame: walkFrame(u, walk) };   // charging: stride scaled to the charge speed
     if (u.castT > 0) {
       const ab = ART.sprite(u.type.id, u.team, 'ability');
       if (ab) {
         const el = CAST_ANIM_SEC - u.castT;
-        return { spr: ab, frame: Math.min(ab.frames - 1, Math.floor(el * ab.fps)) };
+        return { spr: ab, frame: Math.min(ab.frames - 1, Math.floor(el / (ab.frameMs ? ab.frameMs / 1000 : 1 / ab.fps))) };
       }
     }
     if (u.state === 'fight') {
       const atk = ART.sprite(u.type.id, u.team, 'attack');
-      if (!atk) return { spr: walk, frame: 0 };
+      // No attack strip, or ready but nothing to hit (held by ZoC / waiting): idle, not a frozen swing.
+      if (!atk || !(u.cooldown > 0)) return { spr: walk, frame: walkFrame(u, walk) };
       // Attack strip plays once per attack, spread over the cooldown.
       // cooldown resets to cooldownSec on the hit and counts down to 0.
       const cd = u.type.cooldownSec;
@@ -1160,12 +1269,14 @@
       const hf = Math.min(atk.frames - 1, Math.max(0, u.type.hitFrame | 0));
       return { spr: atk, frame: (Math.floor(phase * atk.frames) + hf) % atk.frames };
     }
-    const t = Math.max(0, state.time - (u.bornAt || 0));
-    return { spr: walk, frame: Math.floor(t * walk.fps) % walk.frames };
+    return { spr: walk, frame: walkFrame(u, walk) };   // walking (speed-scaled) or settling to idle
   }
 
   /** Draw one frame with its feet (bottom-centre) at footX, footY. Mirrors for the enemy. */
+  /** Safe frame index: never NaN, negative or past the strip (frame counts come from the sheets). */
+  const safeFrame = (spr, f) => { const n = Math.max(1, spr.frames | 0); f = Math.floor(f); return Number.isFinite(f) ? Math.min(n - 1, Math.max(0, f)) : 0; };
   function drawSpriteFrame(spr, frame, footX, footY, mirror, flash, glow, tintAlpha) {
+    frame = safeFrame(spr, frame);
     const fw = spr.frameW, fh = spr.frameH;
     const sx = frame * spr.srcW;
     ctx.save();
@@ -1370,7 +1481,7 @@
   }
 
   function drawUnitDebug(u, px, top) {
-    const dir = dirOf(u);
+    const dir = faceOf(u);
     const y = C.GROUND_Y_PX + 4 + u.depth / 2;
     ctx.save();
     ctx.fillStyle = '#ff0';
@@ -1399,10 +1510,10 @@
    *  right side. Strip art: speed lines + dust trail to the LEFT of a right-facing unit. */
   function drawBashDash(u, px, footY, sprW) {
     const fxa = ART.fx('fx_shield_bash_dash');
-    const dir = dirOf(u);
+    const dir = dirOf(u);                  // the charge always goes toward the enemy
     ctx.save();
     ctx.translate(Math.round(px), Math.round(footY));
-    if (dir < 0) ctx.scale(-1, 1);
+    if (flipX(fxa, dir)) ctx.scale(-1, 1);
     // right edge of the trail (art content ends at x ~42 of 48) tucked just behind his back/cape (frame x ~8 of 64)
     const x0 = Math.round(-sprW * (24 / 64)) - 42 + 6;
     if (fxa) {
@@ -1418,10 +1529,10 @@
   /** Endure guard glint (Mia's 32x64 4-frame loop) over Brawn's planted shield face, 1x, mirrored on the right. */
   function drawEndureGuard(u, px, footY, sprW) {
     const fxa = ART.fx('fx_endure_guard');
-    const dir = dirOf(u);
+    const dir = faceOf(u);
     ctx.save();
     ctx.translate(Math.round(px), Math.round(footY));
-    if (dir < 0) ctx.scale(-1, 1);
+    if (flipX(fxa, dir)) ctx.scale(-1, 1);
     const sx = Math.round(sprW * (52 / 64) - sprW / 2);   // shield face centre in the braced frames: x ~52 of 64 (shield x 48-56)
     if (fxa) {
       const f = Math.floor(state.time * fxa.fps) % fxa.frames;
@@ -1434,15 +1545,15 @@
   }
 
   function drawUnit(u) {
-    const px = gridToPx(u.x);
+    const px = unitPx(u);          // one integer x for sprite, bars, icons and FX (no shimmer)
     const fr = unitFrame(u);
     const r = u.type.rarity;
 
-    const lift = trapLift(u) + hopLift(u);
+    const lift = Math.round(trapLift(u) + hopLift(u));
     if (u.charge) drawBashDash(u, px, C.GROUND_Y_PX - u.depth - lift, fr ? fr.spr.frameW : u.type.sizePx);
     if (fr) {
       const footY = C.GROUND_Y_PX - u.depth - lift;
-      drawSpriteFrame(fr.spr, fr.frame, px, footY, dirOf(u) < 0, u.flash > 0, r.glow, lsTint(u));
+      drawSpriteFrame(fr.spr, fr.frame, px, footY, flipX(fr.spr, faceOf(u)), u.flash > 0, r.glow, lsTint(u));
       if (u.endureT > 0 && (u.endureDur || 5) - u.endureT >= 0.12) drawEndureGuard(u, px, footY, fr.spr.frameW);
       if (u.trapT > 0) drawBubble(px, footY - fr.spr.frameH * 0.45, fr.spr.frameW * 0.55, 'fx_bubble_trap', state.time);
       const top = footY - fr.spr.frameH;
@@ -1479,7 +1590,7 @@
     }
 
     // facing marker (rangers: a little bow line)
-    const dir = dirOf(u);
+    const dir = faceOf(u);
     ctx.fillStyle = TEAM[u.team].color;
     if (u.type.ranged) {
       ctx.strokeStyle = TEAM[u.team].color;
@@ -1508,11 +1619,23 @@
     if (state.debug) drawUnitDebug(u, px, top);
   }
 
+  /** Death timing: plays once (frameMs per frame, count from the sheet), holds the last frame, fades. */
+  function deathTimes(spr) {
+    const fs = spr.frameMs ? spr.frameMs / 1000 : 1 / (spr.fps || 8);
+    const play = spr.frames * fs;
+    return { fs, play, fadeFrom: play + AD.holdSec, end: play + AD.holdSec + AD.fadeSec };
+  }
   function drawCorpse(c) {
     const spr = ART.sprite(c.type.id, c.team, 'death');
     if (!spr) return;
-    const frame = Math.min(spr.frames - 1, Math.floor(c.t * spr.fps));
-    drawSpriteFrame(spr, frame, gridToPx(c.x), C.GROUND_Y_PX - c.depth, TEAM[c.team].dir < 0, false);
+    const T = deathTimes(spr);
+    const frame = Math.min(spr.frames - 1, Math.floor(c.t / T.fs));
+    const alpha = c.t <= T.fadeFrom ? 1 : Math.max(0, 1 - (c.t - T.fadeFrom) / AD.fadeSec);
+    if (alpha <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    drawSpriteFrame(spr, frame, c.px != null ? c.px : Math.round(gridToPx(c.x)), C.GROUND_Y_PX - c.depth, flipX(spr, c.face || TEAM[c.team].dir), false);
+    ctx.restore();
   }
 
   /** Persistent aura rings (Fortress) drawn on the ground under units. */
@@ -1525,7 +1648,7 @@
       ctx.fillStyle = '#ffd54f14';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.ellipse(gridToPx(u.x), C.GROUND_Y_PX + 2, gridToPx(A.auraGrids), 7, 0, 0, Math.PI * 2);
+      ctx.ellipse(unitPx(u), C.GROUND_Y_PX + 2, gridToPx(A.auraGrids), 7, 0, 0, Math.PI * 2);
       ctx.fill(); ctx.stroke();
       ctx.restore();
     }
@@ -1648,7 +1771,7 @@
     c.width = aw + tw - overlap; c.height = Math.max(ah, th);
     const g = c.getContext('2d');
     g.imageSmoothingEnabled = false;
-    if (dir < 0) { g.translate(c.width, 0); g.scale(-1, 1); }   // mirrored for right-to-left
+    if (flipX(arrow, dir)) { g.translate(c.width, 0); g.scale(-1, 1); }   // mirrored for right-to-left (or a left-drawn sheet)
     if (trail) {
       // tint: white trail, then the team color painted onto its own pixels only (keeps the fade-out alpha)
       const t = document.createElement('canvas');
@@ -1705,7 +1828,7 @@
         hitH = spr ? spr.frameH * 0.45 : p.target.type.sizePx * 0.6;
       }
       let y = C.GROUND_Y_PX - p.depth - hitH;
-      const d = p.team === 'player' ? 1 : -1;
+      const d = p.dir || (p.team === 'player' ? 1 : -1);   // flight direction (set when fired)
       const ps = (C.PROJECTILES && C.PROJECTILES[p.style]) || {};
       if (ps.wobblePx) y += Math.sin((state.time - (p.born || 0)) * ps.wobbleHz * Math.PI * 2) * ps.wobblePx;
       if (p.style === 'bubble') { drawBubble(x, y, ps.radiusPx || 6, 'fx_bubble', state.time - (p.born || 0)); continue; }
@@ -1835,7 +1958,7 @@
           ctx.globalAlpha = k > 0.85 ? (1 - k) / 0.15 : 1;
           // art travels rightward (trail on its left): mirror when flying leftward
           ctx.translate(Math.round(wx), Math.round(wy));
-          if (x1 < x0) ctx.scale(-1, 1);
+          if (flipX(wisp, x1 - x0)) ctx.scale(-1, 1);
           ctx.drawImage(wisp.img, f * wisp.srcW, 0, wisp.srcW, wisp.img.height, -Math.round(wisp.w / 2), -Math.round(wisp.h / 2), wisp.w, wisp.h);
           break;
         }
@@ -1855,8 +1978,8 @@
         if (!u || kk < 0) break;
         const fr = unitFrame(u), sprW = fr ? fr.spr.frameW : 64;
         ctx.globalAlpha = 1;
-        ctx.translate(Math.round(gridToPx(u.x)), C.GROUND_Y_PX - (u.depth || 0));
-        if (e.dir < 0) ctx.scale(-1, 1);
+        ctx.translate(unitPx(u), C.GROUND_Y_PX - (u.depth || 0));
+        if (flipX(fxa, faceOf(u))) ctx.scale(-1, 1);   // at his shield base, whichever way he faces
         const sx = Math.round(sprW * (52 / 64) - sprW / 2);
         if (fxa) {
           const f = Math.min(fxa.frames - 1, Math.floor(kk * fxa.frames));
@@ -1875,7 +1998,7 @@
         const sprH = fr ? fr.spr.frameH : 32;
         ctx.globalAlpha = 1;
         ctx.translate(Math.round(gridToPx(x)), C.GROUND_Y_PX - (e.depth || 0) - Math.round(sprH * 0.5));
-        if (e.dir < 0) ctx.scale(-1, 1);
+        if (flipX(fxa, e.dir)) ctx.scale(-1, 1);   // e.dir = push direction
         if (fxa) {
           const f = Math.min(fxa.frames - 1, Math.floor(k * fxa.frames));
           ctx.drawImage(fxa.img, f * fxa.srcW, 0, fxa.srcW, fxa.img.height, -16 - 6, -16, fxa.w, fxa.h);   // ring starts at the hit side
@@ -1895,7 +2018,7 @@
         const cy = C.GROUND_Y_PX - (e.depth || 0) - Math.round(sprH * 0.5);
         ctx.globalAlpha = 1;
         ctx.translate(Math.round(gridToPx(x)), cy);
-        if (e.dir < 0) ctx.scale(-1, 1);
+        if (flipX(fxa, e.dir)) ctx.scale(-1, 1);   // e.dir = push direction
         if (fxa) {
           const f = Math.min(fxa.frames - 1, Math.floor(k * fxa.frames));
           // burst centre sits at x ~18, y ~24 of 48 in the art (shockwave to its right): put the burst on the
@@ -1913,15 +2036,15 @@
         if (!fxa || !u) break;                  // no art: no FX (the real arrows are normal projectiles)
         const fr = unitFrame(u);
         const sprW = fr ? fr.spr.frameW : u.type.sizePx, sprH = fr ? fr.spr.frameH : u.type.sizePx;
-        const dir = dirOf(u);
+        const dir = faceOf(u);
         const footY = C.GROUND_Y_PX - u.depth - trapLift(u) - hopLift(u);
         // bow hand in Hera's 64px frames: x ~50 (of 64), arrow line y = 24 -> scaled to the sprite size
-        const bx = Math.round(gridToPx(u.x) + dir * (sprW * (50 / 64) - sprW / 2));
+        const bx = unitPx(u) + Math.round(dir * (sprW * (50 / 64) - sprW / 2));
         const by = Math.round(footY - sprH + sprH * (24 / 64) - 6);   // fx first-arrow row is y ~6
         const f = Math.min(fxa.frames - 1, Math.floor(k * fxa.frames));
         ctx.globalAlpha = 1;
         ctx.translate(bx, by);
-        if (dir < 0) ctx.scale(-1, 1);
+        if (flipX(fxa, dir)) ctx.scale(-1, 1);
         ctx.drawImage(fxa.img, f * fxa.srcW, 0, fxa.srcW, fxa.img.height, 0, 0, fxa.w, fxa.h);
         break;
       }
@@ -2844,12 +2967,14 @@
     last = now;
     dt = Math.min(dt, 0.25);
     if (!paused) {
+      const frameDt = dt;
       updateVisuals(dt);
       while (dt > 0) {            // sub-step so fast units never skip past a target
         const step = Math.min(dt, MAX_STEP);
         update(step);
         dt -= step;
       }
+      animateUnits(frameDt);      // visual: once per rendered frame, real elapsed time
     }
     render();
     requestAnimationFrame(frame);
@@ -2988,14 +3113,16 @@
       return { x: gridToPx(u.x), y: C.GROUND_Y_PX - u.depth - h * 0.5 };
     },
     /** What a unit currently shows: { src, mode, frame, frames } or null (placeholder shape). */
-    frameOf(u) { const f = unitFrame(u); return f ? { src: f.spr.src, mode: f.spr.mode, frame: f.frame, frames: f.spr.frames, size: f.spr.frameW } : null; },
+    frameOf(u) { const f = unitFrame(u); const a = u.anim || {}; return f ? { src: f.spr.src, mode: f.spr.mode, frame: f.frame, frames: f.spr.frames, size: f.spr.frameW, faces: f.spr.faces, face: faceOf(u), mirror: flipX(f.spr, faceOf(u)), phase: a.phase, rate: a.rate, speed: a.speed, moving: a.moving, px: a.px } : null; },
+    facing: { faceOf: (u) => faceOf(u), dirOf: (u) => dirOf(u), flipX },
+    animate(dt) { animateUnits(dt); },   // test hook: advance the visual animation only (no simulation)
     sim: {
       /** Pause/resume the real-time loop. */
       pause(p) { paused = p !== false; },
       /** Advance the simulation by `seconds` in fixed steps (no rendering). */
       run(seconds, step) {
         step = step || MAX_STEP;
-        for (let t = 0; t < seconds && !state.over; t += step) { updateVisuals(step); update(step); }
+        for (let t = 0; t < seconds && !state.over; t += step) { updateVisuals(step); update(step); animateUnits(step); }
         return state;
       },
       /**
