@@ -56,7 +56,7 @@ const CONFIG = {
   // 120%, ...) follows these values automatically.
   STAT_STANDARD: {
     // HP per class: the SAME for every rarity.
-    hpByClass: { striker: 100, defender: 150, ranger: 75 },   // ranger 75: boss update (was 50)
+    hpByClass: { striker: 100, defender: 150, ranger: 75, support: 100, bomber: 75 },   // ranger 75: boss update (was 50); support 100 / bomber 75: boss (classes batch)
     // Damage per hit, by rarity then class.
     damageByRarity: {
       // Boss update (12:32): ALL Rangers 10 per hit (was 15); Defenders +10 (Common 15, SR/SSR 20).
@@ -64,9 +64,12 @@ const CONFIG = {
         striker:  5,
         defender: 15,  // was 5 (+10, boss)
         ranger:   10,  // ALL Rangers deal 10 (was 15)
+        support:  10,
+        bomber:   10,
       },
-      sr:  { striker: 10, defender: 20, ranger: 10 },   // Defender 20 (was 10), Ranger 10 (was 15)
-      ssr: { striker: 10, defender: 20, ranger: 10 },   // Defender 20 (was 10), Ranger 10 (was 15)
+      // Support / Bomber 10 per hit (boss; bomber = Margentelle's base, faction bombers may differ later)
+      sr:  { striker: 10, defender: 20, ranger: 10, support: 10, bomber: 10 },   // Defender 20 (was 10), Ranger 10 (was 15)
+      ssr: { striker: 10, defender: 20, ranger: 10, support: 10, bomber: 10 },   // Defender 20 (was 10), Ranger 10 (was 15)
     },
     // Spawn cost in AP, by rarity (same for every class and faction). A unit may set `apCost` in
     // FACTION_UNITS (or a roster slot) for a future "some units cost more" exception.
@@ -86,6 +89,17 @@ const CONFIG = {
   //                           living defender is HELD: it cannot walk on and must attack that
   //                           defender (it may not ignore it to hit something else).
   //   ranged / projectileSpeedGrids : attacks fire a projectile (grids per second)
+  //   flying                : FLYING unit (bombers). Drawn in the air; only units with antiAir can target or
+  //                           hit it (normal attacks AND abilities). Air and ground never block each other's
+  //                           movement: a flyer is not held by a defender's zone of control and is not stopped
+  //                           by the no-pass rule against ground units (and ground units walk under it).
+  //   antiAir               : may target / hit flying units. Boss rule: grounded units that aren't ranged
+  //                           ignore bombers. Ranger, Support and Bomber: yes. Striker, Defender: no.
+  //   splashGrids / splashLess : normal attacks also hit every other enemy within splashGrids of the impact
+  //                           point for (damage - splashLess) (bombers: 10 centre, 5 one grid to each side)
+  //   projectile            : default projectile style for the class (PROJECTILES), units may override
+  // The flying / targeting rules live in ONE helper in game.js, canTarget(attacker, target) (TD.rules.canTarget);
+  // Brian's sim can mirror it 1:1.
   CLASSES: {
     striker: {
       name: 'Striker', tag: 'STR', color: '#ffb74d',
@@ -106,7 +120,22 @@ const CONFIG = {
       name: 'Ranger', tag: 'RNG', color: '#aed581',
       desc: 'Attacks from far away with projectiles. Low health.',
       speedGrids: 3.0, rangeGrids: 9, cooldownSec: 1.4,
-      armor: 0, ranged: true, projectileSpeedGrids: 40,
+      armor: 0, ranged: true, projectileSpeedGrids: 40, antiAir: true,
+    },
+    support: {
+      name: 'Support', tag: 'SUP', color: '#80deea',
+      desc: 'Ranged helper: heals, buffs or debuffs through its ability. Can hit flying units.',
+      // Role (healer / buffer / debuffer) comes from the unit's ability; stats are the class's.
+      speedGrids: 3.0, rangeGrids: 9, cooldownSec: 1.4,   // range like Rangers (boss: ~9 grids)
+      armor: 0, ranged: true, projectileSpeedGrids: 30, antiAir: true, projectile: 'orb',
+    },
+    bomber: {
+      name: 'Bomber', tag: 'BMB', color: '#f48fb1',
+      desc: 'Flying. Drops slow bombs that splash 1 grid to each side. Only ranged units (Rangers, Supports, Bombers) can hit it.',
+      speedGrids: 2.6, rangeGrids: 8.5, cooldownSec: 2.4,  // attack interval very slow: 2.4 s (boss default)
+      armor: 0, ranged: true, projectileSpeedGrids: 14, projectile: 'bomb',
+      flying: true, antiAir: true,
+      splashGrids: 1, splashLess: 5,   // boss: 5 less damage one grid over on each side (10 / 5 / 5)
     },
   },
 
@@ -141,6 +170,24 @@ const CONFIG = {
                desc: 'Blue, silver and gold.' },
     darkelf: { name: 'Dark Elves', colors: ['#b0182a', '#1a1a1a', '#5e1224'], factionColoredArt: true,
                desc: 'Crimson and black.' },
+    // ---- Factions with their OWN roster (ownRoster: true): no 9 standard slots; their units are exactly
+    // the entries in FACTION_UNITS[faction][class][rarity] (key / ability / overrides set per unit). ----
+    //   shared  : unaffiliated units, added to BOTH sides' spawn lists (player bar row "Unaffiliated");
+    //             aiSpawn: the enemy AI may buy them too (the same unit, mirrored)
+    //   reserved: config slot only (art + kit pending): never fielded by the menu, ?side=, swap or the AI
+    neutral:   { name: 'Unaffiliated', colors: ['#f48fb1', '#fff59d', '#7e57c2'], factionColoredArt: true,
+                 ownRoster: true, shared: true, aiSpawn: true,
+                 desc: 'Free agents who fight for whoever pays. First: Margentelle (SSR Bomber).' },
+    // Mia's factions (names / kits from Mia; art pending)
+    tideglass: { name: 'Tideglass', colors: ['#4fc3f7', '#e0f7fa', '#1a237e'], factionColoredArt: true,
+                 ownRoster: true, reserved: true, desc: 'Mia\'s faction (reserved slot, art pending).' },
+    cinder:    { name: 'Cinder Choir', colors: ['#ff7043', '#3e2723', '#ffd180'], factionColoredArt: true,
+                 ownRoster: true, reserved: true, desc: 'Mia\'s faction (reserved slot, art pending).' },
+    // Gab's factions (names / kits from Gab; art pending)
+    moonshard: { name: 'Moonshard', colors: ['#b39ddb', '#eceff1', '#283593'], factionColoredArt: true,
+                 ownRoster: true, reserved: true, desc: 'Gab\'s faction (reserved slot, art pending).' },
+    briarwake: { name: 'Briarwake', colors: ['#7cb342', '#5d4037', '#c5e1a5'], factionColoredArt: true,
+                 ownRoster: true, reserved: true, desc: 'Gab\'s faction (reserved slot, art pending).' },
   },
   PLAYER_FACTION: 'valkyrie',
   ENEMY_FACTION: 'deva',
@@ -179,7 +226,10 @@ const CONFIG = {
   //               STORY.md is never loaded at runtime)
   //   onHit     : statuses added by each NORMAL attack that hits a unit, e.g. { lifesteal: 1 }
   //               (stacks per hit; towers are immune). See STATUSES.
-  //   hitFrame  : attack-strip frame index on which the hit lands (default 0). The strip is
+  //   hitFrame  : attack-strip frame index on which the hit lands (default 0). Either a number, or a map
+  //               keyed by the strip's DETECTED frame count while old and new strips coexist, e.g.
+  //               { 4: 2, 8: 4 } (4-frame strip: hit on 2; 8-frame strip: hit on 4). A count not in the
+  //               map scales proportionally from the nearest listed one (round(f * n / k)). The strip is
   //               rotated so this frame shows at the moment of the hit; frames before it read
   //               as the wind-up leading into the next hit. Art-only; does not change timing.
   FACTION_UNITS: {
@@ -187,18 +237,21 @@ const CONFIG = {
       striker:  { common: { name: 'Valkyrie Footman (placeholder)', art: 'elf_common_striker' },
                   sr:     { name: 'Dia', id: 'valkyrie_dia', spriteSize: 64,
                             ability: 'rallying_charge',
+                            hitFrame: { 4: 2, 8: 5 },   // Gab: 4-frame attack hits on 2; his 8-frame 128 px attack hits on 5 (4 is the smear)
                             bio: 'Main character. Her battle cry lights up the squad.',
                             flavor: 'The youngest blade of the sisterhood. Too honest to stay quiet, too kind to stay out of the fight.' },
                   ssr:    { name: 'Valkyrie SSR Striker (placeholder)', art: 'elf_ssr_striker' } },
       defender: { common: { name: 'Valkyrie Shieldbearer (placeholder)', art: 'elf_common_defender' },
                   sr:     { name: 'Grey', id: 'valkyrie_defender', spriteSize: 64,   // own art (Mia): valkyrie_defender_*.png
                             ability: 'grey_shield_bash',
+                            hitFrame: { 4: 2, 8: 4 },   // 4-frame: 2 = swing arc; Mia's 8-frame 128 px: 3 smear, 4 impact
                             bio: 'A young plate-armored knight with a huge round shield and a double-bladed axe.',
                             flavor: "He knocked on the Valkyries' gate every day for a year. Now nothing gets past him." },   // Petra, STORY.md
                   ssr:    { name: 'Valkyrie SSR Defender (placeholder)', art: 'elf_ssr_defender' } },
       ranger:   { common: { name: 'Valkyrie Archer (placeholder)', art: 'elf_common_ranger' },
                   sr:     { name: 'Hera', id: 'valkyrie_ranger', spriteSize: 64,   // own art (Mia): valkyrie_ranger_*.png
                             ability: 'nimble_shot',
+                            hitFrame: { 4: 2, 8: 4 },   // 4-frame (13:59): 2 = release (arrow leaves); Mia's 8-frame 128 px: release on 4
                             bio: 'Half human, half angel, with a single wing. A blunt, cheerful tomboy with a sharp eye.',
                             flavor: 'One wing, two arrows, zero patience. She never learned to fly, so she learned never to miss.' },
                   ssr:    { name: 'Valkyrie SSR Ranger (placeholder)', art: 'elf_ssr_ranger' } },
@@ -207,19 +260,21 @@ const CONFIG = {
       striker:  { common: { name: 'Deva Footman (placeholder)', art: 'darkelf_common_striker' },
                   sr:     { name: 'Raven', id: 'deva_raven', spriteSize: 64,
                             ability: 'dark_cloud', onHit: { lifesteal: 1 },
+                            hitFrame: { 4: 2, 8: 4 },   // Gab: 4-frame attack hits on 2; his 8-frame 128 px attack hits on 4
                             bio: 'Dia\'s foil. Her strikes leave a draining curse that feeds her.',
                             flavor: 'A nun who stopped believing the sermons but kept the habit. She takes what she\'s owed, one drop at a time.' },
                   ssr:    { name: 'Deva SSR Striker (placeholder)', art: 'darkelf_ssr_striker' } },
       defender: { common: { name: 'Deva Shieldbearer (placeholder)', art: 'darkelf_common_defender' },
                   sr:     { name: 'Brawn', id: 'deva_defender', spriteSize: 64,   // own art (Mia): deva_defender_*.png
                             ability: 'endure',
-                            hitFrame: 2,   // attack strip: 0-1 wind-up, 2 hit (red arc), 3 follow-through
+                            hitFrame: { 4: 2, 8: 4 },   // 4-frame: 0-1 wind-up, 2 hit (red arc), 3 follow-through; Mia's 8-frame: hit on 4
                             bio: 'A mortal ex-pit fighter with pale tattoos on both bare arms, a big shield and a spiked mace.',
                             flavor: "Every tattoo is a fight he walked away from. He's running out of room." },   // Petra
                   ssr:    { name: 'Deva SSR Defender (placeholder)', art: 'darkelf_ssr_defender' } },
       ranger:   { common: { name: 'Deva Archer (placeholder)', art: 'darkelf_common_ranger' },
                   sr:     { name: 'Pela', id: 'deva_ranger', spriteSize: 64,
                             ability: 'bubble_trap', projectile: 'bubble',
+                            hitFrame: { 4: 2, 8: 4 },   // 4-frame (13:59): 2 = release (bubble leaves); Mia's 8-frame 128 px: release on 4
                             bio: 'Timid elf girl who values her friends, but gets excited causing mayhem. Fights with water bubbles.',
                             flavor: 'Shy, sweet, fiercely loyal, and a little too delighted when things go pop.' },
                   ssr:    { name: 'Deva SSR Ranger (placeholder)', art: 'darkelf_ssr_ranger' } },
@@ -246,6 +301,47 @@ const CONFIG = {
                   sr:     { name: 'Nightshade Archer',    id: 'darkelf_ranger',   spriteSize: 64 },
                   ssr:    { name: 'Venomstorm Sniper' } },
     },
+    // ---- Own-roster factions (see FACTIONS.ownRoster). Every entry here IS a unit. ----
+    //   key        : spawn hotkey (player bar); Shift+key casts its ability
+    //   artPending : no art yet (placeholder drawing); the info panel says so
+    //   placeholderArt / placeholderTint : TEMPORARY borrowed sprite prefix + tint used ONLY while
+    //                <id>_walk.png is missing from assets/. Dropping the real files in needs no code change.
+    neutral: {
+      bomber: { ssr: { name: 'Margentelle', id: 'margentelle', key: '0', spriteSize: 64,   // Mia's 2x art: 128 px frames
+                       ability: 'infectious_love', onHit: { shock: 1 },
+                       hitFrame: { 4: 2, 8: 4 },   // placeholder; Mia to confirm the bomb-release frame
+                       placeholderArt: 'elf_ranger', placeholderTint: '#ff6fb5', artPending: true,
+                       bio: 'An unaffiliated bomber who sells her talents to the highest bidder. Confident, theatrical, and never misses a payday.',   // placeholder until Petra's bio
+                       flavor: 'She marks her debts in lightning. Pay up, or freeze.' } },   // Petra
+    },
+    tideglass: {   // Mia
+      support: { sr: { name: 'Wynn', id: 'tideglass_wynn', pronouns: 'she/her', ability: 'tide_mercy', artPending: true,
+                       bio: 'Support healer (placeholder bio).' } },
+      bomber:  { sr: { name: 'Puck', id: 'tideglass_puck', pronouns: 'he/him', ability: 'drift_shot', artPending: true,
+                       bio: 'Bomber archer (placeholder bio).' } },
+    },
+    cinder: {      // Mia
+      support: { sr: { name: 'Bram', id: 'cinder_bram', pronouns: 'he/him', ability: 'ash_mark', artPending: true,
+                       bio: 'Support debuffer (placeholder bio).' } },
+      bomber:  { sr: { name: 'Sable', id: 'cinder_sable', pronouns: 'she/her', ability: 'ember_drop', artPending: true,
+                       bio: 'Bomber mage (placeholder bio).' } },
+    },
+    moonshard: {   // Gab
+      support: { sr: { name: 'Neris', id: 'moonshard_neris', pronouns: 'she/her', ability: 'shard_mend', artPending: true,
+                       bio: 'Support healer (placeholder bio).',
+                       flavor: 'A cracked lantern still lights the path. She just makes sure it cracks the right way.' } },
+      bomber:  { sr: { name: 'Orin', id: 'moonshard_orin', pronouns: 'he/him', ability: 'crescent_fall', artPending: true,
+                       bio: 'Bomber mage (placeholder bio).',
+                       flavor: 'Silence is a moonshard. He lets it fall where it hurts.' } },
+    },
+    briarwake: {   // Gab
+      support: { sr: { name: 'Fern', id: 'briarwake_fern', pronouns: 'she/her', ability: 'root_guard', artPending: true,
+                       bio: 'Support buffer (placeholder bio).',
+                       flavor: 'Roots first, thorns later. She buys her friends a second.' } },
+      bomber:  { sr: { name: 'Bramble', id: 'briarwake_bramble', pronouns: 'he/him', ability: 'briar_burst', artPending: true,
+                       bio: 'Bomber archer (placeholder bio).',
+                       flavor: 'Slow is a kind of trap. His thorns just make it obvious.' } },
+    },
   },
 
   // ---- Projectile styles (ranged normal attacks) ----
@@ -255,6 +351,8 @@ const CONFIG = {
   PROJECTILES: {
     arrow:  { speedGrids: null, wobblePx: 0, wobbleHz: 0, popFx: false },
     bubble: { speedGrids: 16, wobblePx: 4, wobbleHz: 2.5, popFx: true, radiusPx: 6 },
+    orb:    { speedGrids: null, wobblePx: 1, wobbleHz: 3, popFx: false, radiusPx: 3, color: '#80deea' },   // Support (placeholder)
+    bomb:   { speedGrids: null, wobblePx: 0, wobbleHz: 0, popFx: false, radiusPx: 4, color: '#ff6fb5', blastFx: true },   // Bomber: arcs down
   },
 
   // ---- Statuses (stacking effects on units; towers are immune) ----
@@ -271,6 +369,18 @@ const CONFIG = {
                                //   it drains once per tickSec while it lasts (5 s = 5 HP per stack). null = until death
       maxStacks: null,         // null = no cap
       desc: 'Each stack drains 1 HP per second for 5 s (true damage) and heals whoever applied it. Stacks have their own timers.',
+    },
+    // Shock (Margentelle's normal hits): ONE instance per unit, no stacking; a new hit refreshes the
+    // duration (the tick schedule keeps running, so refreshing never adds an extra tick).
+    shock: {
+      name: 'Shock',
+      damagePerTick: 1,        // 1 damage per tick
+      tickSec: 1,              // tick rate 1/s -> 3 ticks over 3 s
+      durationSec: 3,
+      freezeSec: 0.15,         // each tick freezes the unit for ~0.15 s ("a few frames"): no moving / attacking, pose held
+      trueDamage: true,        // like Life Steal ticks: ignores armor and auras (1 stays 1)
+      stacking: 'refresh',     // re-applying while active refreshes the duration; never stacks
+      desc: '1 damage per second for 3 s (true damage); each tick freezes the unit for a moment. Doesn\'t stack; a new hit refreshes the duration.',
     },
   },
 
@@ -370,6 +480,48 @@ const CONFIG = {
       radiusGrids: 3, damageMult: 1.8,
       desc: 'Rains arrows on the most crowded spot in range: 180% damage to every enemy within 3 grids.',
     },
+    infectious_love: {   // Margentelle (Unaffiliated SSR Bomber)
+      name: 'Infectious Love', cooldownSec: 12, firstCooldownSec: 4,   // cooldown 12 s: PLACEHOLDER
+      damage: 20,              // flat bomb damage (Brian's balance note: start at 20; boss may raise it toward 30)
+      zoneFromGrids: 0,        // the bomb covers the 2 grids in front of her: from 0 ...
+      zoneToGrids: 2,          // ... to 2 grids ahead (incl. units right under her)
+      fallSec: 0.35,           // bomb fall time (visual + the damage lands on impact)
+      offCycle: true,          // a dropped bomb, not her attack: castable whenever an enemy is in the zone (her slow
+                               // 2.4 s bomb timer would otherwise make her miss units passing under her); doesn't reset it
+      desc: 'Drops a heart bomb that hits every enemy in the 2 grids in front of her. Casts when an enemy is in that zone.',
+    },
+    // ---- RESERVED kits (pending: true = data only, no handler yet; units holding them never cast). ----
+    tide_mercy: { pending: true, name: 'Tide Mercy', cooldownSec: 8, firstCooldownSec: 2,   // Wynn (Tideglass, Mia)
+      healTotal: 15, overSec: 2, lowHpFrac: 0.5, lowHpTickBonus: 5,
+      desc: 'Heals the weakest ally 15 over 2 s. If it is under half HP, each heal tick restores 5 more.' },
+    drift_shot: { pending: true, name: 'Drift Shot', cooldownSec: 8, firstCooldownSec: 2,   // Puck (Tideglass, Mia)
+      damage: 20, fallSec: 0.6, radiusGrids: 1,
+      desc: 'A slow arrow that bursts for 20 AoE after a short fall. If it tags a flyer, it also hits the grounded unit under it.' },
+    ash_mark: { pending: true, name: 'Ash Mark', cooldownSec: 8, firstCooldownSec: 2,      // Bram (Cinder Choir, Mia)
+      armorDown: 2, durationSec: 2, nextHitBonus: 2,
+      desc: 'Marks a target: -2 armor for 2 s; the next ally hit on it deals +2.' },
+    ember_drop: { pending: true, name: 'Ember Drop', cooldownSec: 9, firstCooldownSec: 3,   // Sable (Cinder Choir, Mia)
+      damage: 18, radiusGrids: 1, burnSec: 1,
+      desc: '18 AoE that leaves a burning puddle for 1 s.' },
+    shard_mend: { pending: true, name: 'Shard Mend', cooldownSec: 8, firstCooldownSec: 2,   // Neris (Moonshard, Gab)
+      healTotal: 12, overSec: 2, debuffTickBonus: 4, cleanse: true,
+      desc: 'Heals the weakest ally 12 over 2 s. If it has a debuff, cleanses it and each heal tick restores 4 more.' },
+    crescent_fall: { pending: true, name: 'Crescent Fall', cooldownSec: 9, firstCooldownSec: 3,   // Orin (Moonshard, Gab)
+      damage: 16, radiusGrids: 1, silenceSec: 1,
+      desc: '16 AoE that silences the target for 1 s (it can\'t cast its ability).' },
+    root_guard: { pending: true, name: 'Root Guard', cooldownSec: 8, firstCooldownSec: 2,    // Fern (Briarwake, Gab)
+      damageReduction: 0.2, durationSec: 2,
+      desc: 'The nearest ally gains 20% damage reduction for 2 s.' },
+    briar_burst: { pending: true, name: 'Briar Burst', cooldownSec: 9, firstCooldownSec: 3,  // Bramble (Briarwake, Gab)
+      damage: 18, radiusGrids: 1, slowMult: 0.5, slowSec: 1,
+      desc: '18 AoE that halves move speed for 1 s.' },
+  },
+
+  // ---- Flying units (visual only: gameplay positions are grids along the lane, the same as ground units) ----
+  FLYING: {
+    heightPx: 44,            // flyers are drawn this far above the ground line (feet), with a ground shadow
+    bobPx: 2, bobHz: 1.1,    // gentle hover bob
+    fallSec: 0.3,            // a dying flyer drops to the ground over this long
   },
 
   // ---- Floating damage numbers (visual only) ----
@@ -409,8 +561,22 @@ CONFIG.GRID_COUNT = CONFIG.STAGE_WIDTH_PX / CONFIG.GRID_SIZE_PX;
  * `cost` = spawn cost in AP (whole number): ident.apCost ?? slot.apCost ?? STAT_STANDARD.apCostByRarity.
  */
 CONFIG.UNIT_TYPES = [];
+/** Roster slots of a faction: the 9 standard ROSTER_SLOTS, or (ownRoster) one slot per FACTION_UNITS entry,
+ *  in CLASSES x RARITIES order. */
+CONFIG.slotsOf = (factionId) => {
+  const f = CONFIG.FACTIONS[factionId];
+  if (!f || !f.ownRoster) return CONFIG.ROSTER_SLOTS;
+  const units = CONFIG.FACTION_UNITS[factionId] || {}, out = [];
+  for (const cid of Object.keys(CONFIG.CLASSES)) {
+    for (const rid of Object.keys(CONFIG.RARITIES)) {
+      const ident = (units[cid] || {})[rid];
+      if (ident) out.push({ class: cid, rarity: rid, ability: ident.ability || null, key: ident.key || null });
+    }
+  }
+  return out;
+};
 for (const [factionId, faction] of Object.entries(CONFIG.FACTIONS)) {
-  for (const slot of CONFIG.ROSTER_SLOTS) {
+  for (const slot of CONFIG.slotsOf(factionId)) {
     const cls = CONFIG.CLASSES[slot.class];
     const rar = CONFIG.RARITIES[slot.rarity];
     if (!cls) throw new Error(`Roster slot: unknown class ${slot.class}`);
@@ -445,15 +611,25 @@ for (const [factionId, faction] of Object.entries(CONFIG.FACTIONS)) {
       projectileSpeedGrids: cls.projectileSpeedGrids || 0,
       // Named characters may replace the slot's ability (ident.ability, null = none).
       ability: ('ability' in ident ? ident.ability : slot.ability) || null,
-      projectile: cls.ranged ? (ident.projectile || 'arrow') : null,
+      projectile: cls.ranged ? (ident.projectile || cls.projectile || 'arrow') : null,
+      flying: !!cls.flying,          // flyers: only antiAir units can target / hit them (game.js canTarget)
+      antiAir: !!cls.antiAir,        // may target flying units (ranger / support / bomber)
+      splashGrids: cls.splashGrids || 0,   // normal-attack splash radius (bomber: 1 grid)
+      splashLess: cls.splashLess || 0,     // splash deals (damage - splashLess)
+      artPending: !!ident.artPending,
+      placeholderArt: ident.placeholderArt || null,   // TEMP borrowed sprite prefix while the real art is missing
+      placeholderTint: ident.placeholderTint || null,
+      pronouns: ident.pronouns || null,
+      shared: !!faction.shared, reserved: !!faction.reserved,
       bio: ident.bio || null,
       flavor: ident.flavor || null,
       ccImmune: !!ident.ccImmune,   // future bosses: immune to stun / trap
       onHit: ident.onHit || null,   // e.g. { lifesteal: 1 }: statuses added by normal hits
-      hitFrame: ident.hitFrame | 0,   // attack-strip frame shown when the hit lands (art only)
+      // attack-strip frame shown when the hit lands (art only): a number or a { frameCount: frame } map
+      hitFrame: ident.hitFrame && typeof ident.hitFrame === 'object' ? Object.assign({}, ident.hitFrame) : (ident.hitFrame | 0),
       enemyWeight: rar.enemyWeight * (slot.enemyWeight || 1),
       color: cls.color,
-      sizePx: Math.round({ striker: 22, defender: 28, ranger: 18 }[slot.class] * rar.sizeMult),
+      sizePx: Math.round(({ striker: 22, defender: 28, ranger: 18, support: 20, bomber: 22 }[slot.class] || 20) * rar.sizeMult),
       spriteSize: ident.spriteSize || null,
       factionColoredArt: !!faction.factionColoredArt,
       short: cls.tag[0],   // letter drawn on the placeholder square

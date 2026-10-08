@@ -6,9 +6,16 @@
  * to the original placeholder drawing for that element. With an empty assets/ folder the
  * game runs exactly like the prototype.
  *
- * Sizes below are the DRAW sizes on the 1000x400 canvas. If an artist delivers at 2x,
- * the loader detects it from the image height and scales down (source frame width is
- * derived from image height), so frame counts are also derived from the strip width.
+ * Sizes below are LOGICAL (1x) draw sizes on the 1000x400 canvas. RESOLUTION-INDEPENDENT SHEETS:
+ * any file may arrive at 1x, 2x (or another scale) under the same name, and 1x and 2x files can mix.
+ * Each sheet's scale comes from the image itself:
+ *   characters: square frames, source frame size = image height (scale = height / logical frame size)
+ *   FX / UI / stage / towers: scale = naturalHeight / spec h; source frame width = spec w x scale
+ *     (the spec w x h, NOT a square: e.g. fx_shield_bash_dash 48x32 at 2x = 96x64 frames)
+ *   frames = floor(naturalWidth / source frame width), min 1 (spec count until the image has loaded)
+ * Everything is DRAWN at its logical size, so hitboxes, layout, anchors, the feet line, hitFrame,
+ * facing detection and FX offsets never move. The canvas backing store renders at up to 2x
+ * (game.js RES), so 2x art shows its extra detail on high-DPI screens; 1x art stays nearest-neighbour.
  */
 const ASSET_MANIFEST = {
   basePath: 'assets/',
@@ -50,6 +57,24 @@ const ASSET_MANIFEST = {
       settleSec: 0.25,      // stopping: finish the stride forward to frame 0 within ~this long (no freeze mid-stride)
     },
     death: { holdSec: 0.35, fadeSec: 0.45 },   // after the last death frame: hold, then fade out
+    // Attack impact (VISUAL ONLY: never read by the simulation, so damage timing and sim results are unchanged).
+    impact: {
+      hitStopSec: 0.06,       // local hit-stop: attacker (on its hit/release frame) and target hold their pose
+      hitStopRetriggerSec: 0.18,   // a unit can't be re-frozen until this long after its last hit-stop started
+                                   // (a clump hitting one target never freezes it for good)
+      shakePx: 2,             // struck target's sprite shake amplitude (px, integer steps)
+      shakeSec: 0.12,         //   ... and duration
+      shakeStepSec: 0.03,     //   offset changes every ~30 ms (same look at 30 / 60 / 144 fps)
+      flashSec: 0.12,         // white flash on the struck target
+      flashAlpha: 0.75,
+      screen: {               // small camera shake for big moments only
+        px: 2, sec: 0.15, stepSec: 0.035,
+        minGapSec: 0.6,       // rate limit: at most one shake start per 0.6 s ...
+        maxPer3Sec: 3,        // ... and at most 3 in any 3 s window (a clump never jitters the screen constantly)
+        kinds: { bashimpact: 2, endureslam: 2, nimble: 1, tower: 1 },   // effect kind -> amplitude (px)
+      },
+      releasePoseSec: [0.09, 0.05],   // off-cycle shots (Nimble Shot's arrows): show hitFrame, then hitFrame+1
+    },
     pos: {
       hysteresisPx: 1.0,    // integer-pixel snap: reversing direction needs a full px of drift (sub-pixel wobble never flickers)
       jumpGridsPerSec: 40,  // a position change faster than this is a jump: smoothed instead of popping
@@ -142,6 +167,11 @@ const ASSET_MANIFEST = {
     fx_arrow_trail:     { file: 'fx_arrow_trail.png',     w: 24, h: 5 },   // white streak fading to the left; tinted per team at runtime
     fx_shield_bash_dash:   { file: 'fx_shield_bash_dash.png',   w: 48, h: 32, fps: 12 },  // Grey's Shield Bash: speed lines + dust behind him while charging (3-frame loop, 1x)
     fx_shield_bash_impact: { file: 'fx_shield_bash_impact.png', w: 48, h: 48, fps: 12 },  // Grey's Shield Bash: gold burst + shockwave on each shoved enemy (4 frames, 1x)
+    // Margentelle / bombers (art pending from Mia: code-drawn placeholders until these land; same names, no code change)
+    fx_bomb:            { file: 'fx_bomb.png',            w: 12, h: 12, fps: 10 },  // bomber projectile (1+ frame loop), drawn centred
+    fx_bomb_blast:      { file: 'fx_bomb_blast.png',      w: 48, h: 32, fps: 12 },  // bomb impact, feet-anchored at the impact (4 frames)
+    fx_infectious_love: { file: 'fx_infectious_love.png', w: 48, h: 32, fps: 12 },  // Infectious Love burst on the ground zone (6 frames suggested)
+    fx_shock:           { file: 'fx_shock.png',           w: 24, h: 32, fps: 12 },  // Shock sparks over a shocked unit (4-frame loop)
   },
 
   // ---- UI ----
@@ -153,6 +183,11 @@ const ASSET_MANIFEST = {
     badge_striker:    { file: 'ui_badge_striker.png',    w: 20,  h: 20 },  // class badge, bottom-right corner of
     badge_defender:   { file: 'ui_badge_defender.png',   w: 20,  h: 20 },  // every portrait button (1x, overhangs
     badge_ranger:     { file: 'ui_badge_ranger.png',     w: 20,  h: 20 },  // the portrait edge by 4px)
+    // New classes (art requested from Mia; until then game.js draws a coloured glyph disc / text tag)
+    class_support:    { file: 'ui_class_support.png',    w: 24,  h: 24 },
+    class_bomber:     { file: 'ui_class_bomber.png',     w: 24,  h: 24 },
+    badge_support:    { file: 'ui_badge_support.png',    w: 20,  h: 20 },
+    badge_bomber:     { file: 'ui_badge_bomber.png',     w: 20,  h: 20 },
     stars_common:     { file: 'ui_stars_common.png',     w: 11,  h: 11 },  // rarity stars: top-left of portrait
     stars_sr:         { file: 'ui_stars_sr.png',         w: 21,  h: 11 },  // buttons (1x) + rarity row headers (2x)
     stars_ssr:        { file: 'ui_stars_ssr.png',        w: 31,  h: 11 },
@@ -191,11 +226,15 @@ ASSET_MANIFEST.LARGE_PORTRAIT = (art) => `${ASSET_MANIFEST.basePath}portraits/${
 
 // Fill per-unit entries from the roster in config.js (so new units get art hooks automatically).
 for (const t of CONFIG.UNIT_TYPES) {
+  if (t.reserved) continue;   // reserved factions (art pending, never fielded): no art requests / 404s
   // Sprite frame size scales with rarity (artist spec): Common 48, SR 64, SSR 80.
   const size = t.spriteSize || ASSET_MANIFEST.SPRITE_SIZE_BY_RARITY[t.rarityId] ||
     (ASSET_MANIFEST.SPRITE_SIZE_BY_CLASS[t.classId] + (t.rarityId === 'ssr' ? ASSET_MANIFEST.SSR_SIZE_BONUS : 0));
   // Faction-coloured art is used as-is: no magenta recolour, no _blue/_red variants.
-  ASSET_MANIFEST.CHARACTERS[t.id] = { prefix: t.art || t.id, frameW: size, frameH: size, recolor: !t.factionColoredArt };
+  ASSET_MANIFEST.CHARACTERS[t.id] = { prefix: t.art || t.id, frameW: size, frameH: size, recolor: !t.factionColoredArt,
+    // TEMPORARY borrowed art while <prefix>_walk.png is missing (e.g. Margentelle before Mia's files land).
+    // Real files in assets/ always win; nothing to change in code when they arrive.
+    placeholder: t.placeholderArt || null, placeholderTint: t.placeholderTint || null };
   ASSET_MANIFEST.UI['portrait_' + t.id] = { file: `ui_portrait_${t.art || t.id}.png`, w: 64, h: 64 };
 }
 
@@ -221,11 +260,24 @@ const ART = (function () {
     notes: [],               // info: sheet frame count differs from the spec (the sheet is used)
     frameCounts: {},         // file -> { frames, srcW, width, height, how: 'sheet' | 'fallback' }
     facing: {},              // file -> { faces: 'right' | 'left', how: 'pixels' | 'manifest', same, mirrored, declared }
+    scales: {},              // file -> image pixels per logical pixel (UI / stage / towers; characters + FX: frameCounts)
+    override: null,          // test-only: { dir, files:Set } from ?artdir= (see loadImage)
   };
 
   // ---------- low-level loading ----------
   function loadImage(file) {
     if (file in store.images) return Promise.resolve(store.images[file]);
+    // TEST-ONLY override (?artdir=<folder>/, off unless the URL asks for it): files present in that folder's
+    // listing load from there instead of assets/ (e.g. temporary 2x upscales). Never used by the shipped game.
+    const ov = store.override;
+    if (ov && ov.files.has(file)) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => { store.images[file] = img.naturalWidth > 0 ? img : null; resolve(store.images[file]); };
+        img.onerror = () => { store.images[file] = null; resolve(null); };
+        img.src = ov.dir + file;
+      });
+    }
     // Known-missing (server listing available and file not in it): skip the request.
     if (store.listing && !store.listing.has(file)) {
       store.images[file] = null;
@@ -256,10 +308,10 @@ const ART = (function () {
    * directory listing and only request files that exist -> no 404 noise in the console.
    * Under file:// this isn't possible, so we just try each file (missing files are fine).
    */
-  async function tryReadListing() {
+  async function tryReadListing(dir) {
     if (location.protocol !== 'http:' && location.protocol !== 'https:') return null;
     try {
-      const res = await fetch(M.basePath, { cache: 'no-store' });
+      const res = await fetch(dir || M.basePath, { cache: 'no-store' });
       if (!res.ok) return null;
       const html = await res.text();
       const names = new Set();
@@ -361,12 +413,19 @@ const ART = (function () {
   function countFrames(img, frameW, frameH, specFrames) {
     const loaded = !!(img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0 && frameW > 0 && frameH > 0);
     if (!loaded) {
-      return { frames: Math.max(1, specFrames | 0), srcW: frameW > 0 ? frameW : 1, how: 'fallback', exact: false, natW: 0, natH: 0 };
+      return { frames: Math.max(1, specFrames | 0), srcW: frameW > 0 ? frameW : 1, srcH: frameH > 0 ? frameH : 1, scale: 1, how: 'fallback', exact: false, natW: 0, natH: 0 };
     }
-    const srcW = frameW * (img.naturalHeight / frameH);
+    // scale = naturalHeight / logical frame height; source frame = logical frame x scale
+    // (characters are square, so the source frame width is simply the image height).
+    const scale = img.naturalHeight / frameH;
+    const srcW = frameW * scale;
     const frames = Math.max(1, Math.floor(img.naturalWidth / srcW + 1e-9));
     const exact = Math.abs(img.naturalWidth / srcW - Math.round(img.naturalWidth / srcW)) < 1e-9 && Math.round(img.naturalWidth / srcW) >= 1;
-    return { frames, srcW, how: 'sheet', exact, natW: img.naturalWidth, natH: img.naturalHeight };
+    return { frames, srcW, srcH: img.naturalHeight, scale, how: 'sheet', exact, natW: img.naturalWidth, natH: img.naturalHeight };
+  }
+  /** Scale of a single-image / strip asset with a logical spec height (FX, UI, stage, towers). 1 until loaded. */
+  function scaleOf(img, specH) {
+    return img && img.naturalHeight > 0 && specH > 0 ? img.naturalHeight / specH : 1;
   }
 
   // ---------- sprite construction ----------
@@ -378,11 +437,12 @@ const ART = (function () {
    */
   function buildSprite(img, src, def, animDef, mode, teamColor) {
     const fc = countFrames(img, def.frameW, def.frameH, animDef.frames);
-    const { frames, srcW, how, natW, natH } = fc;
+    const { frames, srcW, how, natW, natH, scale } = fc;
     if (how === 'fallback') store.warnings.push(`${src}: not loaded yet (naturalWidth 0); using the spec's ${frames} frames`);
     else if (!fc.exact) store.warnings.push(`${src}: width ${natW} is not an exact multiple of frame width ${srcW}; using ${frames} frames`);
     else if (animDef.frames && frames !== animDef.frames) store.notes.push(`${src}: ${frames} frames from the sheet (spec ${animDef.frames})`);   // info only: the sheet wins
-    store.frameCounts[src] = { frames, srcW, width: natW, height: natH, how };
+    store.frameCounts[src] = { frames, srcW, width: natW, height: natH, how, scale };
+    if (how === 'sheet' && Math.abs(scale - Math.round(scale)) > 1e-6) store.warnings.push(`${src}: height ${natH} is not a whole multiple of the ${def.frameH} px frame (scale ${scale.toFixed(3)}); drawn at ${def.frameH} px anyway, but expect uneven pixels`);
     let canvasOrImg = img;
     let outline = null;
     if (mode === 'recolor') {
@@ -400,8 +460,9 @@ const ART = (function () {
       outline,                                  // team-colour silhouette (outline mode only)
       flash: silhouette(img, '#ffffff'),        // white silhouette for hit flash
       faces: (M.FACES[src] === 'left' ? 'left' : 'right'),   // how the sheet is drawn (default right)
-      srcW, srcH: natH || def.frameH,
-      frameW: def.frameW, frameH: def.frameH,   // draw size
+      srcW, srcH: natH || def.frameH,           // source frame (image pixels)
+      scale: scale || 1,                        // image pixels per logical pixel (1 = 1x art, 2 = 2x art)
+      frameW: def.frameW, frameH: def.frameH,   // logical draw size (the same for 1x and 2x art)
       frames,
       frameMs: animDef.frameMs || null,
       fps: animDef.frameMs ? 1000 / animDef.frameMs : animDef.fps,   // legacy alias
@@ -412,11 +473,13 @@ const ART = (function () {
   // ---------- facing from the pixels (load time, never cached across loads) ----------
   const FACE_MARGIN = 0.12;   // silhouette IoU margin needed to call a strip mirrored / not mirrored
   /** Alpha mask of frame 0 of a strip, shifted so its horizontal centre of mass is mid-frame. null if unreadable. */
-  function frame0Mask(img, fw, fh) {
+  function frame0Mask(img, fw, fh, logicalW, logicalH) {
     try {
-      const W = Math.round(fw), H = Math.round(fh);
+      // Sampled down to the LOGICAL frame size (nearest), so a 2x strip compares with a 1x one.
+      const W = Math.round(logicalW || fw), H = Math.round(logicalH || fh);
       const c = makeCanvas(W, H), g = c.getContext('2d', { willReadFrequently: true });
-      g.drawImage(img, 0, 0, W, H, 0, 0, W, H);
+      g.imageSmoothingEnabled = false;
+      g.drawImage(img, 0, 0, fw, fh, 0, 0, W, H);
       const d = g.getImageData(0, 0, W, H).data;
       const m = new Uint8Array(W * H); let sx = 0, n = 0;
       for (let i = 0; i < W * H; i++) if (d[i * 4 + 3] > 0) { m[i] = 1; sx += i % W; n++; }
@@ -445,7 +508,7 @@ const ART = (function () {
     const declared = (f) => (M.FACES[f] === 'left' ? 'left' : 'right');
     const atkFile = `${def.prefix}_attack.png`, atkImg = store.images[atkFile];
     const setFaces = (anim, faces) => { for (const t of ['player', 'enemy']) if (out[t][anim]) out[t][anim].faces = faces; };
-    const ref = atkImg ? frame0Mask(atkImg, def.frameW * atkImg.naturalHeight / def.frameH, atkImg.naturalHeight) : null;
+    const ref = atkImg ? frame0Mask(atkImg, def.frameW * atkImg.naturalHeight / def.frameH, atkImg.naturalHeight, def.frameW, def.frameH) : null;
     const atkFaces = declared(atkFile);
     if (atkImg) store.facing[atkFile] = { faces: atkFaces, how: 'manifest (anchor)', declared: atkFaces };
     for (const anim of Object.keys(M.CHARACTER_ANIMS)) {
@@ -454,7 +517,7 @@ const ART = (function () {
       if (!img || !(out.player[anim] || out.enemy[anim])) continue;
       const decl = declared(file);
       let faces = decl, how = 'manifest', same = null, mirrored = null;
-      const m = ref && frame0Mask(img, def.frameW * img.naturalHeight / def.frameH, img.naturalHeight);
+      const m = ref && frame0Mask(img, def.frameW * img.naturalHeight / def.frameH, img.naturalHeight, def.frameW, def.frameH);
       if (m && m.W === ref.W && m.H === ref.H) {
         same = +maskIoU(m, ref, false).toFixed(3); mirrored = +maskIoU(m, ref, true).toFixed(3);
         if (mirrored - same >= FACE_MARGIN) { faces = atkFaces === 'right' ? 'left' : 'right'; how = 'pixels'; }
@@ -472,6 +535,24 @@ const ART = (function () {
   }
 
   async function loadCharacter(charId, def, teamColors) {
+    const out = await loadCharacterFrom(charId, def, teamColors);
+    if (!out.player.walk && !out.enemy.walk && def.placeholder) {
+      // Own art missing: borrow the placeholder prefix at ITS frame size (whole-number scale, no blur).
+      const src = Object.values(M.CHARACTERS).find((d) => d.prefix === def.placeholder);
+      const pdef = Object.assign({}, def, { prefix: def.placeholder, frameW: src ? src.frameW : def.frameW, frameH: src ? src.frameH : def.frameH, placeholder: null });
+      const ph = await loadCharacterFrom(charId, pdef, teamColors);
+      for (const team of ['player', 'enemy']) {
+        for (const s of Object.values(ph[team])) {
+          if (!s) continue;
+          s.placeholder = def.placeholder;
+          if (def.placeholderTint && s.image && s.image.width) s.image = tinted(s.image, def.placeholderTint, 0.4);   // reads as "not her real art"
+        }
+      }
+      if (ph.player.walk || ph.enemy.walk) { store.notes.push(`${charId}: own art missing, using placeholder ${def.placeholder}_*.png`); return ph; }
+    }
+    return out;
+  }
+  async function loadCharacterFrom(charId, def, teamColors) {
     const out = { player: {}, enemy: {} };
     // walk first: without a walk strip the unit uses the placeholder, so attack/death
     // would never be shown -> don't request them (fewer missing-file requests).
@@ -506,6 +587,14 @@ const ART = (function () {
    */
   async function loadAll(teamColors) {
     store.listing = await tryReadListing();
+    // Test-only art override: ?artdir=<relative folder>/ (same-origin, must serve a directory listing).
+    try {
+      const od = new URLSearchParams(location.search).get('artdir');
+      if (od && /^[\w./-]+\/$/.test(od) && !od.includes('..') && !od.startsWith('/')) {
+        const files = await tryReadListing(od);
+        if (files && files.size) { store.override = { dir: od, files }; console.info(`[art] TEST override: ${[...files].join(', ')} from ${od}`); }
+      }
+    } catch (e) { /* no override */ }
 
     const jobs = [];
     for (const [charId, def] of Object.entries(M.CHARACTERS)) {
@@ -513,26 +602,29 @@ const ART = (function () {
     }
     for (const team of ['player', 'enemy']) {
       for (const variant of ['normal', 'damaged', 'destroyed']) {
-        jobs.push(loadFirst(M.TOWERS[team][variant]).then((r) => { store.towers[team][variant] = r ? r.img : null; }));
+        jobs.push(loadFirst(M.TOWERS[team][variant]).then((r) => { store.towers[team][variant] = r ? r.img : null; if (r) store.scales[r.file] = scaleOf(r.img, M.TOWER_SIZE.h); }));
       }
     }
     for (const [key, def] of Object.entries(M.STAGE)) {
-      jobs.push(loadImage(def.file).then((img) => { store.stage[key] = img; }));
+      jobs.push(loadImage(def.file).then((img) => { store.stage[key] = img; if (img) store.scales[def.file] = scaleOf(img, def.h); }));
     }
     for (const [key, def] of Object.entries(M.UI)) {
-      jobs.push(loadImage(def.file).then((img) => { store.ui[key] = img; }));
+      jobs.push(loadImage(def.file).then((img) => { store.ui[key] = img; if (img) store.scales[def.file] = scaleOf(img, def.h); }));
     }
     for (const [key, def] of Object.entries(M.FX)) {
       jobs.push(loadImage(def.file).then((img) => {
         const ok = !!(img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0);
-        const fsrcW = ok ? img.naturalHeight * def.w / def.h : 0;
+        // FX frames are the LISTED spec size (def.w x def.h, often not square: dash 48x32, guard 32x64,
+        // slam 48x24) times the sheet's scale = naturalHeight / def.h. Never guessed as square.
+        const scale = ok ? scaleOf(img, def.h) : 1;
+        const fsrcW = ok ? def.w * scale : 0;
         store.fx[key] = ok ? {
-          img, faces: (M.FACES[def.file] === 'left' ? 'left' : 'right'), srcW: fsrcW,
+          img, faces: (M.FACES[def.file] === 'left' ? 'left' : 'right'), srcW: fsrcW, srcH: img.naturalHeight, scale,
           frames: Math.max(1, Math.floor(img.naturalWidth / fsrcW + 1e-6)),   // from the sheet, min 1
-          w: def.w, h: def.h, fps: def.fps,
+          w: def.w, h: def.h, fps: def.fps,   // logical draw size
         } : null;
-        if (ok && Math.abs(img.naturalWidth / fsrcW - Math.round(img.naturalWidth / fsrcW)) > 1e-6) store.warnings.push(`${def.file}: width ${img.naturalWidth} is not an exact multiple of frame width ${fsrcW}`);
-        if (ok) store.frameCounts[def.file] = { frames: store.fx[key].frames, srcW: fsrcW, width: img.naturalWidth, height: img.naturalHeight, how: 'sheet' };
+        if (ok && Math.abs(img.naturalWidth / fsrcW - Math.round(img.naturalWidth / fsrcW)) > 1e-6) store.warnings.push(`${def.file}: width ${img.naturalWidth} is not an exact multiple of frame width ${fsrcW} (${def.w}x${def.h} spec at ${scale}x)`);
+        if (ok) store.frameCounts[def.file] = { frames: store.fx[key].frames, srcW: fsrcW, width: img.naturalWidth, height: img.naturalHeight, how: 'sheet', scale };
       }));
     }
     await Promise.all(jobs);
@@ -550,6 +642,9 @@ const ART = (function () {
     store,
     loadAll,
     countFrames,   // exposed for tests: countFrames(img, frameW, frameH, specFrames)
+    scaleOf,       // scaleOf(img, specH): image pixels per logical pixel
+    /** Scale (image px per logical px) of a UI / stage / tower file, 1 if unknown. */
+    uiScale(key) { const d = M.UI[key]; const img = store.ui[key]; return d && img ? scaleOf(img, d.h) : 1; },
     /** Sprite for a character animation, or null. */
     sprite(charId, team, anim) {
       const c = store.chars[charId];

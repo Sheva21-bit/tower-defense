@@ -35,6 +35,8 @@
  * All distances are in GRIDS.
  * To add an ability: add data in config.js ABILITIES, add a handler here, set it on a unit.
  */
+// Abilities marked `pending: true` in config.js (the reserved Tideglass / Cinder Choir / Moonshard / Briarwake kits)
+// have NO handler yet: units holding them never cast. Add the handler here when the kit is greenlit.
 const ABILITY_IMPL = {
   // ---- Striker SR: hit every enemy in a short area in front ----
   cleave: {
@@ -242,6 +244,23 @@ const ABILITY_IMPL = {
   endure: {
     canUse(u, A, api) { return api.foes(u).some((o) => api.dist(u, o) <= u.type.rangeGrids); },   // an enemy within his range
     use(u, A, api) { api.endure(u, A); },
+  },
+
+  // ---- Margentelle (Unaffiliated SSR Bomber): Infectious Love. Drops a heart bomb on the 2 grids in front of her.
+  // The zone is fixed where she cast it; the damage lands after fallSec on every enemy she can hit inside it
+  // (api.foes already applies the flying rules). Units right under her (within UNDER grids behind) count too. ----
+  infectious_love: {
+    UNDER: 0.25,
+    inZone(o, x0, dir, A) { const a = (o.x - x0) * dir; return a >= A.zoneFromGrids - this.UNDER && a <= A.zoneToGrids + 1e-6; },
+    canUse(u, A, api) { const d = api.dir(u); return api.foes(u).some((o) => this.inZone(o, u.x, d, A)); },
+    use(u, A, api) {
+      const dir = api.dir(u), x0 = u.x;
+      api.fx({ kind: 'heartbomb', src: u, x0, dir, from: A.zoneFromGrids, to: A.zoneToGrids, fall: A.fallSec, depth: u.depth, dur: A.fallSec + 0.45 });
+      api.fx({ kind: 'text', x: u.x, text: 'Infectious Love!', color: '#ff80ab', depth: u.depth, dur: 0.9 });
+      api.later(A.fallSec, () => {
+        for (const o of api.foes(u)) if (this.inZone(o, x0, dir, A)) api.damage(o, A.damage, u);
+      });
+    },
   },
 
   // ---- Ranger SSR: AoE on the most crowded spot within range ----

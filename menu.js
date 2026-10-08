@@ -43,7 +43,8 @@
   const STAGES = [{ id: 1, name: 'Stage 1', desc: 'The first lane.' }]; // campaign stages drop in here later
 
   // ---- Saved preferences (localStorage; the damage-numbers key is shared with game.js) ----
-  const KEYS = { side: 'td.menu.side', auto: 'td.autoCast', nums: 'td.showDamageNumbers', sound: 'td.sound' };
+  const reducedMotion = () => { try { return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } };
+  const KEYS = { side: 'td.menu.side', auto: 'td.autoCast', nums: 'td.showDamageNumbers', shake: 'td.screenShake', sound: 'td.sound' };
   const store = {
     get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, String(v)); } catch (e) { /* storage blocked: session only */ } },
@@ -58,6 +59,7 @@
     side: validSide(params.get('side')) ? params.get('side') : (validSide(store.get(KEYS.side)) ? store.get(KEYS.side) : C.PLAYER_FACTION),
     auto: params.has('auto') ? params.get('auto') === '1' : store.get(KEYS.auto, '0') === '1',
     nums: store.get(KEYS.nums, C.SHOW_DAMAGE_NUMBERS === false ? '0' : '1') === '1',
+    shake: store.get(KEYS.shake, reducedMotion() ? '0' : '1') === '1',   // shared with game.js: on unless reduced motion
     sound: store.get(KEYS.sound, '1') === '1',
     stage: 1,
   };
@@ -147,6 +149,7 @@
         el('h2', null, 'Settings'),
         toggle('Auto-cast abilities', 'auto', 'Default for new battles. Toggle in-game with A or the AUTO button.'),
         toggle('Damage numbers', 'nums', 'Floating numbers over units that get hit. In-game: N or the 123 button.'),
+        toggle('Screen shake', 'shake', 'The screen shakes on big hits like Shield Bash, Endure and tower hits.'),
         toggle('Sound', 'sound', 'No sound in the game yet; this setting is saved for when it arrives.', true),
         el('div', { class: 'tdm-row tdm-actions' },
           btn('Back', back, { 'data-autofocus': '' }),
@@ -177,12 +180,17 @@
       // Live game already loaded? keep it in sync.
       if (window.TD && typeof window.TD.setShowDamageNumbers === 'function') window.TD.setShowDamageNumbers(prefs.nums);
     }
+    if (key === 'shake') {
+      store.set(KEYS.shake, prefs.shake ? '1' : '0');
+      if (window.TD && window.TD.impact && typeof window.TD.impact.setScreenShake === 'function') window.TD.impact.setScreenShake(prefs.shake);
+    }
     if (key === 'sound') store.set(KEYS.sound, prefs.sound ? '1' : '0');
   }
   function resetPrefs() {
     Object.values(KEYS).forEach(store.del);
-    prefs.side = C.PLAYER_FACTION; prefs.auto = false; prefs.nums = C.SHOW_DAMAGE_NUMBERS !== false; prefs.sound = true;
+    prefs.side = C.PLAYER_FACTION; prefs.auto = false; prefs.nums = C.SHOW_DAMAGE_NUMBERS !== false; prefs.shake = !reducedMotion(); prefs.sound = true;
     savePref('nums');
+    savePref('shake');
     render('settings');
   }
 

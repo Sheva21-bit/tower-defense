@@ -21,6 +21,9 @@
     body > h1 { font-size: 18px; margin: 0 0 8px; font-weight: 600; }
     #wrap { position: relative; }
     canvas { display: block; border: 2px solid #333a55; border-radius: 4px; max-width: 100%; }
+    /* The backing store may be 2000x800 (high-DPI, game.js RES) but the canvas is always LAID OUT at its
+       logical 1000x400 size (phones override the width below); height follows the 2.5:1 aspect. */
+    canvas#stage { width: 1000px; height: auto; aspect-ratio: 1000 / 400; }
     #buttons { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; justify-content: center; }
     button.spawn { background: #222a44; color: #eee; border: 1px solid #4a5580; border-radius: 6px;
                    padding: 8px 12px; cursor: pointer; text-align: left; font-size: 13px; }
@@ -161,7 +164,7 @@
     .row-units button.spawn.unit { width: 320px; flex: none; }
     /* Mia's ui_spawn_frame.png as a 9-slice: slice 8 px drawn at 8 px (1x) -> trim + corner sparkles stay pixel-exact;
        edges and fill are flat colour, so stretching them can't smear or tile. Rarity still reads from stars/headers/glow. */
-    #buttons.has-spawn-frame button.spawn.unit { border: 8px solid transparent; border-image: var(--spawn-frame) 8 fill / 8px stretch;
+    #buttons.has-spawn-frame button.spawn.unit { border: 8px solid transparent; border-image: var(--spawn-frame) var(--spawn-slice, 8) fill / 8px stretch;
                background: none; padding: 2px 4px 2px 4px; image-rendering: pixelated; border-radius: 0; }
     #buttons.has-spawn-frame button.spawn.unit:hover:not(.disabled) { filter: brightness(1.18); background: none; }
     #buttons.has-spawn-frame button.spawn.unit.rar-sr  { box-shadow: 0 0 0 1px #9ecbff66, 0 0 6px #9ecbff44; }
@@ -260,7 +263,7 @@
              justify-content: flex-start; }
       body > h1, #help, #enemy-roster, .faction-head, .group-head { display: none !important; }
       #wrap { width: fit-content; max-width: 100%; }
-      canvas { border: 0; border-radius: 0; height: auto;
+      canvas, canvas#stage { border: 0; border-radius: 0; height: auto;
                width: min(calc(100vw - var(--safe-l) - var(--safe-r)), calc((100vh - var(--strip-h)) * 2.5));
                width: min(calc(100vw - var(--safe-l) - var(--safe-r)), calc((100dvh - var(--strip-h)) * 2.5)); }
       #hud-ctl { top: 4px; gap: 4px; }

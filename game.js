@@ -40,9 +40,42 @@
   const C = CONFIG;
   const canvas = document.getElementById('stage');
   const ctx = canvas.getContext('2d');
-  canvas.width = C.STAGE_WIDTH_PX;
-  canvas.height = C.STAGE_HEIGHT_PX;
-  ctx.imageSmoothingEnabled = false; // keep pixel art crisp (re-applied every frame too)
+  // LOGICAL canvas: all game logic, layout, hit tests and drawing coordinates are 1000x400.
+  // The BACKING STORE is LW*RES x LH*RES and every frame draws through ctx.setTransform(RES, ...), so
+  // 2x art keeps its detail on high-DPI screens while 1x art is still drawn nearest-neighbour (crisp).
+  const LW = C.STAGE_WIDTH_PX, LH = C.STAGE_HEIGHT_PX;
+  const RES_MAX = 2;   // backing-store cap (2x: 4x the pixels of 1x; 3x would be 9x for little visible gain)
+  let RES = 1;
+  let resReady = false;   // set once BLUR / arrowCache exist (applyRes runs before they're declared)
+  /** Backing-store scale: never above the device's devicePixelRatio (1x-DPR screens stay 1x), never above
+   *  RES_MAX, and no more than the canvas actually needs (device pixels per logical pixel, rounded up).
+   *  ?res=1|2|3 forces it (testing). Integer only, so logical integer pixels stay whole device pixels. */
+  function pickRes() {
+    let forced = 0;
+    try { forced = Math.round(+new URLSearchParams(location.search).get('res')) || 0; } catch (e) { /* no URL */ }
+    if (forced >= 1 && forced <= 3) return forced;
+    const dpr = typeof devicePixelRatio === 'number' && devicePixelRatio > 0 ? devicePixelRatio : 1;
+    const cap = Math.max(1, Math.min(RES_MAX, Math.floor(dpr + 0.05)));
+    const cssW = +canvas.clientWidth > 0 ? +canvas.clientWidth : LW;
+    const need = Math.max(1, Math.ceil(cssW * dpr / LW - 0.05));
+    return Math.min(cap, need);
+  }
+  function applyRes() {
+    const r = pickRes();
+    if (r === RES && +canvas.width === LW * r) return false;
+    RES = r;
+    canvas.width = LW * RES;          // (resets the context state; render() re-applies transform + smoothing)
+    canvas.height = LH * RES;
+    if (resReady) onResChange();
+    return true;
+  }
+  /** Start of every frame: logical coordinates, nearest-neighbour sampling. */
+  function beginFrame() {
+    ctx.setTransform(RES, 0, 0, RES, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+  }
+  applyRes();
+  beginFrame();
 
   const AM = ASSET_MANIFEST;
 
@@ -62,20 +95,28 @@
   // (pixelated), so devicePixelRatio never multiplies the drawing cost. Glow blurs are the most
   // expensive canvas op on mobile GPUs, so they're halved on touch devices.
   const TOUCH = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
-  const BLUR = TOUCH ? 0.5 : 1;
+  // shadowBlur is NOT scaled by the canvas transform, so it's multiplied by RES (same look at 1x and 2x).
+  const BLUR_BASE = TOUCH ? 0.5 : 1;
+  let BLUR = BLUR_BASE * RES;
+  function onResChange() { BLUR = BLUR_BASE * RES; arrowCache.clear(); }
   const UNIT_TYPES = C.UNIT_TYPES;                       // every faction's units
   let PLAYER_ROSTER, ENEMY_ROSTER;                       // spawn bar + keys 1-9 / enemy AI picks
+  // Shared (unaffiliated) factions: their units join BOTH sides' spawn lists (player bar row "Unaffiliated";
+  // the enemy AI buys them only if the faction has aiSpawn). Reserved factions are never fielded.
+  const sharedUnits = (forAi) => UNIT_TYPES.filter((t) => t.shared && !t.reserved && (!forAi || t.faction.aiSpawn));
   function refreshRosters() {
-    PLAYER_ROSTER = C.rosterOf(C.PLAYER_FACTION);
-    ENEMY_ROSTER = C.rosterOf(C.ENEMY_FACTION);
+    PLAYER_ROSTER = C.rosterOf(C.PLAYER_FACTION).concat(sharedUnits(false));
+    ENEMY_ROSTER = C.rosterOf(C.ENEMY_FACTION).concat(sharedUnits(true));
   }
   // Faction ids from the URL, the menu or Game.start() are validated as OWN keys of CONFIG.FACTIONS
   // (a plain C.FACTIONS[id] lookup lets 'constructor' / '__proto__' / 'toString' through via the prototype).
   const hasOwn = Object.hasOwn || ((o, k) => Object.prototype.hasOwnProperty.call(o, k));   // old iOS Safari
-  const isFaction = (id) => typeof id === 'string' && hasOwn(C.FACTIONS, id);
-  const DEFAULT_PLAYER_FACTION = isFaction(C.PLAYER_FACTION) ? C.PLAYER_FACTION : Object.keys(C.FACTIONS)[0];
+  // A SIDE faction must also be fieldable: shared (unaffiliated) and reserved (config-only) factions can't be a side.
+  const isFaction = (id) => typeof id === 'string' && hasOwn(C.FACTIONS, id) && !C.FACTIONS[id].shared && !C.FACTIONS[id].reserved;
+  const SIDE_IDS = Object.keys(C.FACTIONS).filter(isFaction);
+  const DEFAULT_PLAYER_FACTION = isFaction(C.PLAYER_FACTION) ? C.PLAYER_FACTION : SIDE_IDS[0];
   const DEFAULT_ENEMY_FACTION = isFaction(C.ENEMY_FACTION) && C.ENEMY_FACTION !== DEFAULT_PLAYER_FACTION
-    ? C.ENEMY_FACTION : Object.keys(C.FACTIONS).find((id) => id !== DEFAULT_PLAYER_FACTION);
+    ? C.ENEMY_FACTION : SIDE_IDS.find((id) => id !== DEFAULT_PLAYER_FACTION);
   C.PLAYER_FACTION = DEFAULT_PLAYER_FACTION;
   C.ENEMY_FACTION = DEFAULT_ENEMY_FACTION;
   // ?side=<faction> picks the player's faction (e.g. ?side=deva plays Deva vs Valkyries); anything else = defaults.
@@ -113,6 +154,8 @@
 
   function newGame(opts) {
     opts = opts || {};
+    vfx.shake = null; vfx.kicks = []; vfx.pending = [];
+    vfx.screenOn = loadShakePref();   // the menu's Settings may have changed td.screenShake since the last match
     state = {
       time: 0,
       units: [],
@@ -158,6 +201,8 @@
       stun: 0,                   // seconds of stun left
       trapT: 0,                  // seconds of bubble trap left (floats, can't act)
       ls: [],                    // Life Steal stacks, each with its own timer: [{ src, next, until }]
+      shock: null,               // Shock (one instance, refreshable): { src, next, until }
+      freezeT: 0,                // Shock freeze: seconds left (can't move / act)
       speedBuffT: 0, speedBuffMult: 1, // movement-speed buff (Rallying Charge); doesn't stack
       hop: null,                 // short scripted move { from, to, t, dur } (e.g. Dark Cloud hop back)
       charge: null,              // shield charge in progress { left, speed, hit:Set, ... } (Grey's Shield Bash)
@@ -206,7 +251,7 @@
   function playerSpawn(typeId) {
     if (state.over) return false;
     const t = typeById(typeId);
-    if (!t || t.factionId !== C.PLAYER_FACTION) return false;
+    if (!t || !PLAYER_ROSTER.includes(t)) return false;   // own faction + shared (unaffiliated) units
     if (isCapped('player', t)) {         // blocked: costs nothing, brief feedback
       if (state.capMsgAt == null || state.time - state.capMsgAt > 0.35) {
         state.capMsgAt = state.time;
@@ -282,6 +327,19 @@
   const foes = (u) => state.units.filter((o) => o.team !== u.team && o.hp > 0);
   const allies = (u) => state.units.filter((o) => o.team === u.team && o.hp > 0);
 
+  // ---------------- FLYING / TARGETING RULES (the only place they live; TD.rules exposes them) ----------------
+  // Boss: grounded units that aren't ranged ignore bomber-class (flying) enemies.
+  //   canTarget(a, o): a may target / hit o. Flying targets need an antiAir attacker (ranger, support, bomber);
+  //                    strikers and defenders never target or hit flyers (normal attacks AND abilities).
+  //   blocksMove(u, o): o stops u under the no-pass rule. Air and ground are separate layers: only same-layer
+  //                    enemies block, so flyers float over melee and ground units walk under flyers.
+  //   held(u):         flyers are never held by a defender's zone of control (zocHolder).
+  // Rangers / supports still STOP for flyers, because a flyer in range is a valid target for them.
+  const canHit = (antiAir, o) => !(o.type.flying && !antiAir);
+  const canTarget = (a, o) => canHit(!!a.type.antiAir, o);
+  const blocksMove = (u, o) => !!u.type.flying === !!o.type.flying;
+  const targetableFoes = (u) => state.units.filter((o) => o.team !== u.team && o.hp > 0 && canTarget(u, o));
+
   /**
    * Apply damage to a unit: armor (class) and damage-taken multipliers (auras).
    * Inside a simulation tick (state.hitBuffer set, see update()) the hit is BUFFERED: the amount
@@ -313,7 +371,8 @@
   function applyHit(target, dealt, source, opts) {
     if (!(dealt > 0)) return 0;
     target.hp -= dealt;
-    if (!(opts && opts.noFlash)) target.flash = 0.12;
+    if (!(opts && opts.noFlash)) target.flash = IMP.flashSec;   // white flash (visual)
+    if (!(opts && (opts.noFlash || opts.dot))) vfxStruck(target);   // visual only: hit-stop + shake
     dmgNumber(target, dealt, opts && opts.dot ? 'red' : 'white');
     if (source) {
       const sid = source.type.id;
@@ -366,6 +425,7 @@
     const before = state.towers[team].hp;
     state.towers[team].hp = Math.max(0, before - amount);
     dmgNumber({ tower: team }, before - state.towers[team].hp, 'white');
+    if (before > state.towers[team].hp) vfxKick('tower', 0);   // visual only (rate-limited camera shake)
     if (source) {
       const sid = source.type.id;
       state.stats.damageBy[sid] = (state.stats.damageBy[sid] || 0) + amount;
@@ -388,7 +448,7 @@
   function unitHeadY(u) {
     const walk = ART.sprite(u.type.id, u.team, 'walk');
     const h = walk ? walk.frameH : u.type.sizePx;
-    return C.GROUND_Y_PX - u.depth - h - 15;
+    return C.GROUND_Y_PX - u.depth - flyLift(u) - h - 15;
   }
   const numText = (kind, value) => (kind === 'green' ? '+' : '') + Math.max(0, Math.round(value));
   /** Approx. on-canvas box of a number (px) at its current float height. */
@@ -473,7 +533,7 @@
     let nx = x;
     const gap = C.NO_PASS_GAP_GRIDS;
     for (const o of state.units) {
-      if (o.team === u.team || o.hp <= 0) continue;
+      if (o.team === u.team || o.hp <= 0 || !blocksMove(u, o)) continue;   // air / ground don't block each other
       if (ahead(u, o) < -1e-6) continue;              // only enemies in front matter
       const lim = o.x - d * gap;
       if (d > 0) nx = Math.min(nx, Math.max(u.x, lim));
@@ -486,6 +546,7 @@
 
   /** Defender zone of control: nearest living enemy defender that holds u, or null. */
   function zocHolder(u) {
+    if (u.type.flying) return null;                   // flyers are never held (ZoC is a ground rule)
     let best = null, bd = Infinity;
     for (const o of state.units) {
       if (o.team === u.team || o.hp <= 0 || !(o.type.blockGrids > 0)) continue;
@@ -499,24 +560,28 @@
   /** Target selection (see header comment for the priority order). */
   function pickTarget(u) {
     const range = u.type.rangeGrids;
-    if (u.tauntT > 0 && u.tauntBy && u.tauntBy.hp > 0 && dist(u, u.tauntBy) <= range) return u.tauntBy;
+    if (u.tauntT > 0 && u.tauntBy && u.tauntBy.hp > 0 && canTarget(u, u.tauntBy) && dist(u, u.tauntBy) <= range) return u.tauntBy;
     const holder = zocHolder(u);
-    if (holder && dist(u, holder) <= range) return holder;
+    if (holder && canTarget(u, holder) && dist(u, holder) <= range) return holder;
     let target = null, best = Infinity;
     for (const o of state.units) {
-      if (o.team === u.team || o.hp <= 0) continue;
+      if (o.team === u.team || o.hp <= 0 || !canTarget(u, o)) continue;   // melee ignore flyers
       const d = dist(u, o);
       if (d <= range && d < best) { best = d; target = o; }
     }
     return target;
   }
 
-  function fx(e) { e.t = 0; state.effects.push(e); }
+  function fx(e) {
+    e.t = 0; state.effects.push(e);
+    if (IMP.screen.kinds[e.kind]) vfxKick(e.kind, e.delay || 0);   // visual only: big moments shake the camera
+  }
 
   // ---------------- Statuses ----------------
   /** Add `stacks` of a status to a unit (towers aren't units, so they're immune). */
   function addStatus(target, id, stacks, source) {
     if (!target || target.hp <= 0 || !(stacks > 0)) return 0;
+    if (id === 'shock') return addShock(target, source);
     if (id !== 'lifesteal') { console.warn('[status] unknown status', id); return 0; }
     const S = C.STATUSES.lifesteal;
     let added = 0;
@@ -556,6 +621,41 @@
     }
   }
 
+  /** Shock (Margentelle): ONE instance per unit, no stacking. Re-applying while active refreshes the duration;
+   *  the tick schedule keeps running (a refresh never adds or resets a tick). */
+  function addShock(target, source) {
+    const S = C.STATUSES.shock;
+    const sh = target.shock;
+    if (sh && state.time <= sh.until + 1e-9) {
+      sh.until = state.time + S.durationSec;
+      if (source) sh.src = source;
+      state.stats.shockRefresh = (state.stats.shockRefresh || 0) + 1;
+      return 0;
+    }
+    target.shock = { src: source || null, next: state.time + S.tickSec, until: state.time + S.durationSec, from: state.time };
+    state.stats.shockApplied = (state.stats.shockApplied || 0) + 1;
+    return 1;
+  }
+  /** Shock ticks: damagePerTick (true damage) + a short freeze (freezeSec) per tick; ends after durationSec. */
+  function updateShock(u) {
+    const S = C.STATUSES.shock, sh = u.shock;
+    while (u.hp > 0 && sh.next <= state.time + 1e-9 && sh.next <= sh.until + 1e-6) {
+      sh.next += S.tickSec;
+      const dealt = damageUnit(u, S.damagePerTick, sh.src, { trueDamage: S.trueDamage, noFlash: true, dot: true });
+      state.stats.shockTicks = (state.stats.shockTicks || 0) + 1;
+      state.stats.shockDamage = (state.stats.shockDamage || 0) + dealt;
+      freeze(u, S.freezeSec);
+      fx({ kind: 'zap', unit: u, depth: u.depth, dur: 0.2 });
+    }
+    if (sh.next > sh.until + 1e-6) u.shock = null;   // all ticks done
+  }
+  /** Short freeze: no moving / attacking / casting for `sec` (pose held). Doesn't stack: takes the longer. */
+  function freeze(u, sec) {
+    if (!u || u.hp <= 0 || u.type.ccImmune || !(sec > 0)) return;
+    u.freezeT = Math.max(u.freezeT || 0, sec);
+    if (u.anim) { u.anim.stopT = Math.max(u.anim.stopT || 0, sec); u.anim.stopFr = null; }   // visual: hold the pose
+  }
+
   /** Movement-speed buff (doesn't stack: the larger bonus wins, re-applying refreshes). */
   function buffSpeed(t, mult, sec) {
     if (!t || t.hp <= 0) return;
@@ -569,7 +669,7 @@
     let to = u.x + dx;
     const gap = C.NO_PASS_GAP_GRIDS;
     for (const o of state.units) {
-      if (o.team === u.team || o.hp <= 0) continue;
+      if (o.team === u.team || o.hp <= 0 || !blocksMove(u, o)) continue;
       if (dx < 0 && o.x < u.x) to = Math.max(to, o.x + gap);
       if (dx > 0 && o.x > u.x) to = Math.min(to, o.x - gap);
     }
@@ -630,7 +730,7 @@
     const bumps = [];
     for (const u of chargers) {
       for (const o of state.units) {
-        if (o.team === u.team || o.hp <= 0 || u.charge.hit.has(o)) continue;
+        if (o.team === u.team || o.hp <= 0 || u.charge.hit.has(o) || !canTarget(u, o)) continue;   // charges pass under flyers
         const a = ahead(u, o);
         if (a >= -0.5 && a <= gap + 0.05) bumps.push([u, o, u.charge]);   // charge captured: u may get shoved below
       }
@@ -669,6 +769,7 @@
       if (state.time >= z.until) continue;
       for (const o of state.units) {
         if (o.team === z.team || o.hp <= 0 || z.hit.has(o.id)) continue;
+        if (z.source && !canTarget(z.source, o)) continue;   // e.g. Raven's ground cloud doesn't reach flyers
         if (Math.abs(o.x - z.x) <= z.rGrids) { z.hit.add(o.id); if (z.onEnter) z.onEnter(o); }
       }
     }
@@ -684,7 +785,7 @@
   const abilityApi = {
     C,
     get state() { return state; },
-    dir: dirOf, foes, allies, ahead, dist,
+    dir: dirOf, foes: targetableFoes, allies, ahead, dist, canTarget,   // foes = enemies u can target (flying rules)
     currentTarget: (u) => { const t = pickTarget(u); return t && t.hp > 0 ? t : null; },
     damage: damageUnit,
     heal: healUnit,
@@ -711,7 +812,11 @@
     },
     /** Run fn after `sec` seconds of game time (cleared on restart). */
     later: (sec, fn) => { state.timers.push({ at: state.time + sec, fn }); },
-    shoot: (u, target, mult) => { if (target && target.hp > 0) fireProjectile(u, target, u.type.damage * (mult == null ? 1 : mult)); },
+    shoot: (u, target, mult) => {
+      if (!(target && target.hp > 0)) return;
+      fireProjectile(u, target, u.type.damage * (mult == null ? 1 : mult));
+      vfxRelease(u); vfxAttack(u);   // visual only: release pose + hit-stop on each ability arrow
+    },
     /** True if projectiles already in flight at t will kill it (so a follow-up shot should retarget). */
     doomed: (t) => {
       if (!t || t.hp <= 0) return true;
@@ -720,7 +825,7 @@
       for (const p of state.projectiles) if (!p.done && p.target === t && !p.onArrive) inc += p.damage * mult;
       return inc >= t.hp - 1e-6;
     },
-    canAct: (u) => !!u && u.hp > 0 && !(u.stun > 0) && !(u.trapT > 0) && !u.hop && !u.knock && !u.charge,
+    canAct: (u) => !!u && u.hp > 0 && !(u.stun > 0) && !(u.trapT > 0) && !(u.freezeT > 0) && !u.hop && !u.knock && !u.charge,
     burst: (u, sec) => { u.burstT = Math.max(u.burstT || 0, sec); },
     addStatus,
     buffSpeed,
@@ -744,6 +849,8 @@
       damage, speed: ps.speedGrids || u.type.projectileSpeedGrids || 40, source: u,
       style, born: state.time, onHit: u.type.onHit,
       hitY: target ? target.type.sizePx / 2 : 60,
+      x0: u.x + fdir * 0.5, fromH: u.type.flying || (target && target.type.flying) ? shotHeight(u) : null,   // visual: launch height
+      antiAir: !!u.type.antiAir, splashGrids: u.type.splashGrids || 0, splashLess: u.type.splashLess || 0,
     });
     state.stats.projectiles++;
   }
@@ -751,6 +858,7 @@
   /** Normal attack. Rangers fire a projectile; everyone else hits instantly. */
   function basicAttack(u, target) {
     const foeTeam = foeTeamOf(u);
+    vfxAttack(u);                  // visual only: the attacker holds its hit / release frame
     if (u.type.ranged) {
       fireProjectile(u, target, u.type.damage);
     } else if (target) {
@@ -798,7 +906,7 @@
       return 'cooldown';
     }
     if (u.castQueued) return 'queued';
-    const busy = u.stun > 0 || u.trapT > 0 || u.hop || u.knock || u.charge;
+    const busy = u.stun > 0 || u.trapT > 0 || u.freezeT > 0 || u.hop || u.knock || u.charge;
     if (!busy && !impl.canUse(u, A, abilityApi)) { noTarget(u); return 'no-target'; }
     if (!busy && (u.cooldown <= 0 || A.offCycle) && !(u.burstT > 0)) { doCast(u); return 'cast'; }
     u.castQueued = true;
@@ -814,6 +922,19 @@
     if (!mine.length) return 'none';
     const ready = mine.find((u) => u.abilityCd <= 0 && !u.castQueued);
     return tryCast(ready || mine[0]);
+  }
+
+  /** Bomber splash: every OTHER enemy within splashGrids of the impact gets (damage - splashLess) (10 / 5 / 5). */
+  function splash(p, cx) {
+    const dmg = Math.max(0, p.damage - p.splashLess);
+    if (!(dmg > 0)) return;
+    for (const o of state.units) {
+      if (o.team === p.team || o.hp <= 0 || o === p.target || !canHit(p.antiAir, o)) continue;
+      if (Math.abs(o.x - cx) <= p.splashGrids + 1e-6) {
+        damageUnit(o, dmg, p.source, { splash: true });
+        state.stats.splashHits = (state.stats.splashHits || 0) + 1;
+      }
+    }
   }
 
   function updateProjectiles(dt) {
@@ -833,6 +954,8 @@
         else if (p.target) { damageUnit(p.target, p.damage, p.source, { direct: true }); applyOnHit(p.onHit, p.target, p.source); }
         else damageTower(p.towerTeam, p.damage, p.source);
         const ps = C.PROJECTILES && C.PROJECTILES[p.style];
+        if (!p.onArrive && p.splashGrids > 0) splash(p, tx);
+        if (!p.onArrive && ps && ps.blastFx) fx({ kind: 'blast', x: tx, rGrids: p.splashGrids || 0.6, color: ps.color || '#ff6fb5', depth: p.target ? p.target.depth : p.depth, dur: 0.35 });
         if (ps && ps.popFx) fx({ kind: 'pop', x: tx, rGrids: 0.6, color: '#b3e5fc', depth: p.target ? p.target.depth : p.depth, dur: 0.3 });
       } else {
         p.x += Math.sign(tx - p.x) * step;
@@ -888,6 +1011,8 @@
         if (u.burstT > 0) u.burstT = Math.max(0, u.burstT - dt);   // multi-shot burst lock (Nimble Shot)
 
         if (u.ls.length) updateLifesteal(u);   // DoT ticks even while stunned/trapped (buffered: a lethal tick still lets it act this tick)
+        if (u.freezeT > 0) u.freezeT = u.freezeT - dt > 1e-9 ? u.freezeT - dt : 0;
+        if (u.shock) updateShock(u);           // Shock ticks (1 dmg + short freeze) even while stunned / trapped
         if (u.speedBuffT > 0) { u.speedBuffT = Math.max(0, u.speedBuffT - dt); if (u.speedBuffT <= 0) u.speedBuffMult = 1; }
         if (u.knock) {                 // being knocked back: smooth push (ease-out), no other action meanwhile
           u.knock.t += dt;
@@ -915,6 +1040,7 @@
           continue;
         }
         if (u.stun > 0) { u.stun = Math.max(0, u.stun - dt); u.state = 'stunned'; continue; }
+        if (u.freezeT > 0) { u.state = 'frozen'; continue; }   // Shock tick: frozen for a few frames
         u.act = true;
         actors.push(u);
       }
@@ -980,7 +1106,7 @@
     // Visual only: dead units with a death animation leave a corpse that plays it out.
     for (const u of state.units) {
       if (u.hp <= 0 && ART.sprite(u.type.id, u.team, 'walk') && ART.sprite(u.type.id, u.team, 'death')) {
-        state.corpses.push({ type: u.type, team: u.team, x: u.x, px: u.anim ? u.anim.px : Math.round(gridToPx(u.x)), face: faceOf(u), depth: u.depth, t: 0 });
+        state.corpses.push({ type: u.type, team: u.team, x: u.x, px: u.anim ? u.anim.px : Math.round(gridToPx(u.x)), face: faceOf(u), depth: u.depth, t: 0, flyH: flyLift(u) });
       }
     }
 
@@ -1145,6 +1271,100 @@
     stopSpeed: 0.15, speedSmoothSec: 0.05, settleSec: 0.25 }, ANIM.walk);
   const AD = Object.assign({ holdSec: 0.35, fadeSec: 0.45 }, ANIM.death);
   const APOS = Object.assign({ hysteresisPx: 1.0, jumpGridsPerSec: 40, jumpSmoothSec: 0.08 }, ANIM.pos);
+  // Attack impact tuning (ASSET_MANIFEST.ANIM.impact). VISUAL ONLY: the hooks below write to u.anim and the
+  // vfx object, which the simulation never reads, and they never call Math.random, so damage timing and sim
+  // results are identical with the effects on or off (tests/impact.js compares seeded battles).
+  const IMP = Object.assign({ hitStopSec: 0.06, hitStopRetriggerSec: 0.18, shakePx: 2, shakeSec: 0.12, shakeStepSec: 0.03,
+    flashSec: 0.12, flashAlpha: 0.75, releasePoseSec: [0.09, 0.05] }, ANIM.impact);
+  IMP.screen = Object.assign({ px: 2, sec: 0.15, stepSec: 0.035, minGapSec: 0.6, maxPer3Sec: 3,
+    kinds: { bashimpact: 2, endureslam: 2, nimble: 1, tower: 1 } }, ANIM.impact && ANIM.impact.screen);
+  const SHAKE_PATTERN = [1, -1, 1, -1, 0, 1, -1, 0];          // deterministic (no Math.random)
+  const SCREEN_PATTERN = [[1, 0], [-1, 1], [1, -1], [-1, 0], [0, 1], [1, 0], [0, -1], [-1, 1]];
+  /** Screen-shake setting: localStorage 'td.screenShake' ('1'/'0'); default on unless prefers-reduced-motion. */
+  const SHAKE_KEY = 'td.screenShake';   // shared with Brian's menu Settings (reads / writes the same key)
+  function loadShakePref() {
+    try {
+      const v = localStorage.getItem(SHAKE_KEY);   // '1' / '0', same format as td.showDamageNumbers
+      if (v === '0' || v === '1') return v === '1';
+    } catch (e) { /* storage blocked */ }
+    return !(typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+  const vfx = {
+    clock: 0,                 // visual time (advances per rendered frame; frozen while paused)
+    enabled: true,            // master switch for hit-stop / target shake / screen shake (tests compare on vs off)
+    screenOn: loadShakePref(),
+    shake: null,              // { t0, sec, px }
+    kicks: [],                // shake starts (visual time) in the last 3 s, for the rate limit
+    pending: [],              // delayed kicks (e.g. Brawn's slam lands 0.12 s after the cast)
+    stats: { hitStops: 0, shakes: 0, screenShakes: 0, screenSkipped: 0 },
+  };
+  /** Local hit-stop: hold this unit's pose (and render position) for IMP.hitStopSec. */
+  function vfxHitStop(u) {
+    if (!vfx.enabled || !u || u.hp <= 0 || !(IMP.hitStopSec > 0)) return;
+    const a = u.anim || (u.anim = newAnim(u));
+    if (vfx.clock < (a.stopNext || 0)) return;                  // retrigger guard (clumps)
+    a.stopT = IMP.hitStopSec; a.stopFr = null; a.stopNext = vfx.clock + IMP.hitStopRetriggerSec;
+    vfx.stats.hitStops++;
+  }
+  /** The attacker reached its hit / release frame (melee hit, arrow or bubble leaving the bow). */
+  function vfxAttack(u) { vfxHitStop(u); }
+  /** A unit took a direct hit: hit-stop + 1-2 px sprite shake (the white flash is u.flash, IMP.flashSec). */
+  function vfxStruck(t) {
+    if (!vfx.enabled || !t || t.hp <= 0) return;
+    vfxHitStop(t);
+    const a = t.anim || (t.anim = newAnim(t));
+    if (!(a.shakeT > 0)) a.shakeT0 = vfx.clock;
+    a.shakeT = IMP.shakeSec;
+    vfx.stats.shakes++;
+  }
+  /** Off-cycle shot (Nimble Shot arrows): brief release pose hitFrame -> hitFrame+1 on top of the attack cycle. */
+  function vfxRelease(u) {
+    if (!u || u.hp <= 0) return;
+    const a = u.anim || (u.anim = newAnim(u));
+    a.relT0 = vfx.clock; a.relOn = true;
+  }
+  /** Big moment: small camera shake, rate-limited (minGapSec, maxPer3Sec). kind -> amplitude via IMP.screen.kinds. */
+  function vfxKick(kind, delay) {
+    const amp = IMP.screen.kinds[kind];
+    if (!amp || !vfx.enabled || !vfx.screenOn) return;
+    if (delay > 0) { vfx.pending.push({ at: vfx.clock + delay, kind }); return; }
+    const now = vfx.clock;
+    vfx.kicks = vfx.kicks.filter((t) => now - t < 3);
+    const lastKick = vfx.kicks.length ? vfx.kicks[vfx.kicks.length - 1] : -1e9;
+    if (now - lastKick < IMP.screen.minGapSec || vfx.kicks.length >= IMP.screen.maxPer3Sec) { vfx.stats.screenSkipped++; return; }
+    vfx.kicks.push(now);
+    vfx.shake = { t0: now, sec: IMP.screen.sec, px: Math.min(IMP.screen.px, amp) };
+    vfx.stats.screenShakes++;
+  }
+  /** Integer camera offset for this frame ({x:0,y:0} when idle / disabled). */
+  function screenShakeOffset() {
+    const sh = vfx.shake;
+    if (!sh || !vfx.screenOn) return { x: 0, y: 0 };
+    const el = vfx.clock - sh.t0;
+    if (el >= sh.sec || el < 0) return { x: 0, y: 0 };
+    const p = SCREEN_PATTERN[Math.floor(el / IMP.screen.stepSec) % SCREEN_PATTERN.length];
+    const amp = Math.max(1, Math.round(sh.px * (1 - el / sh.sec * 0.5)));
+    return { x: p[0] * amp, y: p[1] * Math.max(1, amp - 1) };
+  }
+  /** Integer sprite shake of a struck unit for this frame (0 when idle). */
+  function unitShakePx(u) {
+    const a = u.anim;
+    if (!a || !(a.shakeT > 0)) return 0;
+    const el = vfx.clock - (a.shakeT0 || 0);
+    const p = SHAKE_PATTERN[(Math.floor(el / IMP.shakeStepSec) + (u.id | 0)) % SHAKE_PATTERN.length];
+    return Math.round(p * Math.max(1, IMP.shakePx * Math.min(1, a.shakeT / IMP.shakeSec + 0.5)));
+  }
+  /** Advance the visual effect clocks (once per rendered frame, real elapsed time). */
+  function vfxTick(dt) {
+    vfx.clock += dt;
+    if (vfx.clock - (vfx.prefAt || 0) >= 0.5) { vfx.prefAt = vfx.clock; vfx.screenOn = loadShakePref(); }   // menu Settings may flip it mid-match
+    if (vfx.pending.length) {
+      const due = vfx.pending.filter((k) => k.at <= vfx.clock);
+      vfx.pending = vfx.pending.filter((k) => k.at > vfx.clock);
+      for (const k of due) vfxKick(k.kind, 0);
+    }
+    if (vfx.shake && vfx.clock - vfx.shake.t0 >= vfx.shake.sec) vfx.shake = null;
+  }
   const animMs = (anim, fallback) => ((AM.CHARACTER_ANIMS[anim] && AM.CHARACTER_ANIMS[anim].frameMs) || fallback) / 1000;
   const WALK_SEC = animMs('walk', 110);
   const clampN = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -1174,6 +1394,7 @@
    */
   function animateUnits(dt) {
     if (!(dt > 0)) return;
+    vfxTick(dt);
     const kSpeed = 1 - Math.exp(-dt / AW.speedSmoothSec);
     const kJump = Math.exp(-dt / APOS.jumpSmoothSec);
     for (const u of state.units) {
@@ -1181,6 +1402,13 @@
       const a = u.anim || (u.anim = newAnim(u));
       const dx = u.x - a.lastX;
       a.lastX = u.x;
+      if (a.shakeT > 0) a.shakeT = Math.max(0, a.shakeT - dt);
+      if (a.stopT > 0) {             // hit-stop: hold the pose AND the render position; the real position
+        a.stopT = Math.max(0, a.stopT - dt);   // keeps moving underneath and is eased back in afterwards
+        a.off -= dx;                 // (same smoothing as a jump: no pop, no ghost)
+        a.rx = u.x + a.off;
+        continue;
+      }
       const inst = Math.abs(dx) / dt;
       const jump = inst > APOS.jumpGridsPerSec;
       if (jump) a.off -= dx;                       // keep the visual where it was ...
@@ -1221,6 +1449,25 @@
       }
     }
   }
+  /**
+   * Hit frame for an attack strip with `frames` frames (detected from the sheet). config hitFrame is a number,
+   * or a map keyed by frame count ({ 4: 2, 8: 4 }) while old and new strips coexist; a count that isn't listed
+   * scales proportionally from the nearest listed count. Always a valid index (never NaN / out of range).
+   */
+  function hitFrameOf(type, frames) {
+    const n = Math.max(1, frames | 0), h = type && type.hitFrame;
+    let f = 0;
+    if (h && typeof h === 'object') {
+      const keys = Object.keys(h).map(Number).filter((k) => k > 0 && Number.isFinite(+h[k]));
+      if (h[n] != null && Number.isFinite(+h[n])) f = +h[n];
+      else if (keys.length) {
+        const k = keys.sort((a, b) => Math.abs(a - n) - Math.abs(b - n) || b - a)[0];
+        f = Math.round(+h[k] * n / k);
+      }
+    } else f = +h || 0;
+    f = Math.floor(f);
+    return Number.isFinite(f) ? Math.min(n - 1, Math.max(0, f)) : 0;
+  }
   /** Current walk-strip frame from the unit's phase. */
   function walkFrame(u, walk) {
     const a = u.anim;
@@ -1259,6 +1506,14 @@
     if (u.state === 'fight') {
       const atk = ART.sprite(u.type.id, u.team, 'attack');
       // No attack strip, or ready but nothing to hit (held by ZoC / waiting): idle, not a frozen swing.
+      const hf0 = atk ? hitFrameOf(u.type, atk.frames) : 0;
+      const ua = u.anim;
+      if (atk && ua && ua.relOn) {   // off-cycle shot (Nimble Shot): release pose hitFrame, then hitFrame+1
+        const el = vfx.clock - ua.relT0, [p0, p1] = IMP.releasePoseSec;
+        if (el >= 0 && el < p0) return { spr: atk, frame: hf0 };
+        if (el >= 0 && el < p0 + p1) return { spr: atk, frame: (hf0 + 1) % atk.frames };
+        ua.relOn = false;
+      }
       if (!atk || !(u.cooldown > 0)) return { spr: walk, frame: walkFrame(u, walk) };
       // Attack strip plays once per attack, spread over the cooldown.
       // cooldown resets to cooldownSec on the hit and counts down to 0.
@@ -1266,7 +1521,7 @@
       const phase = cd > 0 ? Math.min(0.9999, Math.max(0, (cd - u.cooldown) / cd)) : 0;
       // Per-unit hit frame: rotate the strip so frame hitFrame shows when the hit lands
       // (e.g. Brawn: 0-1 wind-up, 2 hit). Default 0 = strip starts on the hit.
-      const hf = Math.min(atk.frames - 1, Math.max(0, u.type.hitFrame | 0));
+      const hf = hitFrameOf(u.type, atk.frames);
       return { spr: atk, frame: (Math.floor(phase * atk.frames) + hf) % atk.frames };
     }
     return { spr: walk, frame: walkFrame(u, walk) };   // walking (speed-scaled) or settling to idle
@@ -1296,7 +1551,7 @@
       if (tint) { ctx.globalAlpha = tintAlpha; ctx.drawImage(tint, sx, 0, spr.srcW, spr.srcH, dx, dy, fw, fh); ctx.globalAlpha = 1; }
     }
     if (flash) {
-      ctx.globalAlpha = 0.75;
+      ctx.globalAlpha = IMP.flashAlpha;
       ctx.drawImage(spr.flash, sx, 0, spr.srcW, spr.srcH, dx, dy, fw, fh);
     }
     ctx.restore();
@@ -1406,6 +1661,26 @@
   }
 
   const hopLift = (u) => (u.hop ? Math.sin(Math.PI * Math.min(1, u.hop.t / u.hop.dur)) * 9 : 0);
+  /** Flyers hover CONFIG.FLYING.heightPx above the ground line (visual only). */
+  const FLY = C.FLYING || { heightPx: 44, bobPx: 2, bobHz: 1.1, fallSec: 0.3 };
+  function flyLift(u) {
+    if (!u || !u.type.flying) return 0;
+    return FLY.heightPx + Math.sin((state ? state.time : 0) * FLY.bobHz * Math.PI * 2 + u.id) * FLY.bobPx;
+  }
+  /** Height above the ground (px) a unit's shots leave from / are aimed at: mid-body + flight height. */
+  function shotHeight(u) {
+    const spr = ART.sprite(u.type.id, u.team, 'walk');
+    return (spr ? spr.frameH * 0.45 : u.type.sizePx * 0.6) + flyLift(u);
+  }
+  /** Ground shadow under a flyer. */
+  function drawFlyShadow(u, px, w) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.beginPath();
+    ctx.ellipse(px, C.GROUND_Y_PX - u.depth + 1, Math.max(8, w * 0.3), 3.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
   const lsTint = (u) => (u.ls.length ? Math.min(0.42, 0.18 + 0.04 * u.ls.length) : 0);
 
   function drawUnitHpBar(cx, y, w, frac, team) {
@@ -1546,14 +1821,19 @@
 
   function drawUnit(u) {
     const px = unitPx(u);          // one integer x for sprite, bars, icons and FX (no shimmer)
-    const fr = unitFrame(u);
+    let fr = unitFrame(u);
+    const a = u.anim;
+    if (a && a.stopT > 0 && fr) { a.stopFr = a.stopFr || fr; fr = a.stopFr; }   // hit-stop: hold the pose
+    else if (a) a.stopFr = null;
+    const sx = unitShakePx(u);     // struck: 1-2 px sprite shake (sprite only; bars / icons stay steady)
     const r = u.type.rarity;
 
-    const lift = Math.round(trapLift(u) + hopLift(u));
+    const lift = Math.round(trapLift(u) + hopLift(u) + flyLift(u));
+    if (u.type.flying) drawFlyShadow(u, px, fr ? fr.spr.frameW : u.type.sizePx);
     if (u.charge) drawBashDash(u, px, C.GROUND_Y_PX - u.depth - lift, fr ? fr.spr.frameW : u.type.sizePx);
     if (fr) {
       const footY = C.GROUND_Y_PX - u.depth - lift;
-      drawSpriteFrame(fr.spr, fr.frame, px, footY, flipX(fr.spr, faceOf(u)), u.flash > 0, r.glow, lsTint(u));
+      drawSpriteFrame(fr.spr, fr.frame, px + sx, footY, flipX(fr.spr, faceOf(u)), u.flash > 0, r.glow, lsTint(u));
       if (u.endureT > 0 && (u.endureDur || 5) - u.endureT >= 0.12) drawEndureGuard(u, px, footY, fr.spr.frameW);
       if (u.trapT > 0) drawBubble(px, footY - fr.spr.frameH * 0.45, fr.spr.frameW * 0.55, 'fx_bubble_trap', state.time);
       const top = footY - fr.spr.frameH;
@@ -1563,6 +1843,7 @@
       drawSpeedBuff(u, px - bw / 2, top - 7);
       drawRarityPips(u, px, top - 13);
       drawStatus(u, px, top - 8);
+      drawShock(u, px, footY, fr.spr.frameH);
       drawReadyIndicator(u, px, top - 26);
       if (state.debug) drawUnitDebug(u, px, top);
       return;
@@ -1575,7 +1856,7 @@
     ctx.save();
     if (r.glow) { ctx.shadowColor = r.glow; ctx.shadowBlur = 12 * BLUR; }
     ctx.fillStyle = u.flash > 0 ? '#fff' : u.type.color;
-    ctx.fillRect(px - s / 2, top, s, s);
+    ctx.fillRect(px + sx - s / 2, top, s, s);
     ctx.restore();
     ctx.strokeStyle = TEAM[u.team].color;
     ctx.lineWidth = 3;
@@ -1615,8 +1896,28 @@
     drawSpeedBuff(u, px - Math.max(s, 18) / 2, top - 7);
     drawRarityPips(u, px, top - 13);
     drawStatus(u, px, top - 8);
+    drawShock(u, px, top + s, s);
     drawReadyIndicator(u, px, top - 26);
     if (state.debug) drawUnitDebug(u, px, top);
+  }
+
+  /** Shock: small yellow sparks crackling around the unit while it lasts (placeholder until FX art). */
+  function drawShock(u, px, footY, h) {
+    if (!u.shock) return;
+    ctx.save();
+    ctx.strokeStyle = u.freezeT > 0 ? '#ffffff' : '#ffeb3b';
+    ctx.lineWidth = u.freezeT > 0 ? 2 : 1.25;
+    ctx.globalAlpha = 0.9;
+    const n = 2, t = state.time;
+    for (let i = 0; i < n; i++) {
+      const seed = Math.floor(t * 12) + i * 7 + u.id;
+      const r = (k) => ((Math.sin(seed * 12.9898 + k * 78.233) * 43758.5453) % 1 + 1) % 1;
+      let x = px + (r(1) - 0.5) * h * 0.6, y = footY - h * (0.3 + r(2) * 0.5);
+      ctx.beginPath(); ctx.moveTo(x, y);
+      for (let k = 0; k < 3; k++) { x += (r(3 + k) - 0.5) * 8; y += 3 + r(6 + k) * 3; ctx.lineTo(x, y); }
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   /** Death timing: plays once (frameMs per frame, count from the sheet), holds the last frame, fades. */
@@ -1634,7 +1935,8 @@
     if (alpha <= 0) return;
     ctx.save();
     ctx.globalAlpha = alpha;
-    drawSpriteFrame(spr, frame, c.px != null ? c.px : Math.round(gridToPx(c.x)), C.GROUND_Y_PX - c.depth, flipX(spr, c.face || TEAM[c.team].dir), false);
+    const fall = c.flyH ? c.flyH * Math.max(0, 1 - c.t / (FLY.fallSec || 0.3)) : 0;   // flyers drop to the ground
+    drawSpriteFrame(spr, frame, c.px != null ? c.px : Math.round(gridToPx(c.x)), C.GROUND_Y_PX - c.depth - fall, flipX(spr, c.face || TEAM[c.team].dir), false);
     ctx.restore();
   }
 
@@ -1662,7 +1964,8 @@
     const fxa = ART.fx(fxKey);
     if (fxa) {
       const f = Math.floor((age || 0) * fxa.fps) % fxa.frames;
-      const size = fxa.srcW * Math.max(1, Math.round((r * 4) / fxa.srcW) / 2);   // half-step nearest-neighbour scales (1x, 1.5x, 2x...) stay crisp
+      // logical size (fxa.w), never the source width: a 2x sheet draws exactly as big as the 1x one
+      const size = fxa.w * Math.max(1, Math.round((r * 4) / fxa.w) / 2);   // half-step nearest-neighbour scales (1x, 1.5x, 2x...) stay crisp
       ctx.drawImage(fxa.img, f * fxa.srcW, 0, fxa.srcW, fxa.img.height, Math.round(x - size / 2), Math.round(y - size / 2), size, size);
       return;
     }
@@ -1704,7 +2007,7 @@
       const cy = C.GROUND_Y_PX - 30;
       if (art) {                     // ground cloud, scaled to the cloud's diameter (half-steps, >= 1x)
         const f = Math.floor(age * art.fps) % art.frames;
-        const sc = Math.max(1, Math.round((rpx * 2 * 2) / art.srcW) / 2);
+        const sc = Math.max(1, Math.round((rpx * 2 * 2) / art.w) / 2);   // logical width (same for 1x / 2x sheets)
         const w = art.w * sc, h = art.h * sc;
         ctx.globalAlpha = 0.92 * fade;
         ctx.drawImage(art.img, f * art.srcW, 0, art.srcW, art.img.height,
@@ -1756,38 +2059,44 @@
   const ARROW_SCALE = 1;
   const ARROW_TRAIL_TINT = 0.45;          // how strongly the white trail takes the shooter's team color (faint)
   const ARROW_TRAIL_ALPHA = 0.8;
-  const arrowCache = new Map();           // `${color}|${dir}` -> baked canvas: tinted trail + arrow, tip at the edge
+  const arrowCache = new Map();           // `${color}|${dir}|${RES}` -> baked canvas: tinted trail + arrow, tip at the edge
+  resReady = true;
   /** Arrow + trail baked into one small canvas per team color and direction (one drawImage per arrow). */
   function arrowSprite(color, dir) {
     const arrow = ART.fx('fx_arrow');
     if (!arrow) return null;
-    const ck = `${color}|${dir}`;
+    const ck = `${color}|${dir}|${RES}`;
     let c = arrowCache.get(ck);
     if (c) return c;
     const trail = ART.fx('fx_arrow_trail');
     const s = ARROW_SCALE, aw = arrow.w * s, ah = arrow.h * s;
     const tw = trail ? trail.w * s : 0, th = trail ? trail.h * s : 0, overlap = trail ? 2 * s : 0;
+    // Baked at the backing-store resolution (RES device px per logical px), drawn at its logical size
+    // (c.lw x c.lh), so 2x arrow art keeps its detail and 1x art stays nearest-neighbour.
     c = document.createElement('canvas');
-    c.width = aw + tw - overlap; c.height = Math.max(ah, th);
+    c.lw = aw + tw - overlap; c.lh = Math.max(ah, th);
+    c.width = c.lw * RES; c.height = c.lh * RES;
     const g = c.getContext('2d');
     g.imageSmoothingEnabled = false;
-    if (flipX(arrow, dir)) { g.translate(c.width, 0); g.scale(-1, 1); }   // mirrored for right-to-left (or a left-drawn sheet)
+    g.scale(RES, RES);
+    if (flipX(arrow, dir)) { g.translate(c.lw, 0); g.scale(-1, 1); }   // mirrored for right-to-left (or a left-drawn sheet)
     if (trail) {
       // tint: white trail, then the team color painted onto its own pixels only (keeps the fade-out alpha)
       const t = document.createElement('canvas');
-      t.width = trail.w; t.height = trail.h;
+      t.width = trail.w * RES; t.height = trail.h * RES;
       const tg = t.getContext('2d');
-      tg.drawImage(trail.img, 0, 0, trail.srcW, trail.img.height, 0, 0, trail.w, trail.h);
+      tg.imageSmoothingEnabled = false;
+      tg.drawImage(trail.img, 0, 0, trail.srcW, trail.img.height, 0, 0, t.width, t.height);
       tg.globalCompositeOperation = 'source-atop';
       tg.globalAlpha = ARROW_TRAIL_TINT;
       tg.fillStyle = color;
       tg.fillRect(0, 0, t.width, t.height);
       g.globalAlpha = ARROW_TRAIL_ALPHA;
-      g.drawImage(t, 0, Math.floor((c.height - th) / 2), tw, th);
+      g.drawImage(t, 0, Math.floor((c.lh - th) / 2), tw, th);
       g.globalAlpha = 1;
     }
-    g.drawImage(arrow.img, 0, 0, arrow.srcW, arrow.img.height, c.width - aw, Math.floor((c.height - ah) / 2), aw, ah);
-    c.tipY = Math.floor(c.height / 2);
+    g.drawImage(arrow.img, 0, 0, arrow.srcW, arrow.img.height, c.lw - aw, Math.floor((c.lh - ah) / 2), aw, ah);
+    c.tipY = Math.floor(c.lh / 2);
     arrowCache.set(ck, c);
     return c;
   }
@@ -1807,13 +2116,13 @@
     if (!spr) return false;
     const tip = Math.round(x + d * 4), ty = Math.round(y) - spr.tipY;   // tip where the old arrowhead was
     if (Math.abs(ang) <= 0.02) {          // straight flight: plain blit (the common case)
-      ctx.drawImage(spr, d > 0 ? tip - spr.width : tip, ty);
+      ctx.drawImage(spr, d > 0 ? tip - spr.lw : tip, ty, spr.lw, spr.lh);
       return true;
     }
     ctx.save();                           // angled flight: rotate about the tip
     ctx.translate(tip, Math.round(y));
     ctx.rotate(d > 0 ? ang : -ang);
-    ctx.drawImage(spr, d > 0 ? -spr.width : 0, -spr.tipY);
+    ctx.drawImage(spr, d > 0 ? -spr.lw : 0, -spr.tipY, spr.lw, spr.lh);
     ctx.restore();
     return true;
   }
@@ -1823,15 +2132,36 @@
     for (const p of state.projectiles) {
       const x = gridToPx(p.x);
       let hitH = 20;
-      if (p.target) {
-        const spr = ART.sprite(p.target.type.id, p.target.team, 'walk');
-        hitH = spr ? spr.frameH * 0.45 : p.target.type.sizePx * 0.6;
+      if (p.target) hitH = shotHeight(p.target);   // incl. flight height for flyers
+      if (p.fromH != null && p.x0 != null) {        // from / to a flyer: slide from the launch height to the target's
+        const tx = p.target ? p.target.x : p.toX != null ? p.toX : TOWER_FRONT[p.towerTeam];
+        const span = Math.abs(tx - p.x0), k = span > 1e-6 ? Math.min(1, Math.abs(p.x - p.x0) / span) : 1;
+        const kk = p.style === 'bomb' ? k * k : k;   // bombs accelerate down
+        hitH = p.fromH + (hitH - p.fromH) * kk;
       }
       let y = C.GROUND_Y_PX - p.depth - hitH;
       const d = p.dir || (p.team === 'player' ? 1 : -1);   // flight direction (set when fired)
       const ps = (C.PROJECTILES && C.PROJECTILES[p.style]) || {};
       if (ps.wobblePx) y += Math.sin((state.time - (p.born || 0)) * ps.wobbleHz * Math.PI * 2) * ps.wobblePx;
       if (p.style === 'bubble') { drawBubble(x, y, ps.radiusPx || 6, 'fx_bubble', state.time - (p.born || 0)); continue; }
+      const bombArt = p.style === 'bomb' ? ART.fx('fx_bomb') : null;
+      if (bombArt) {
+        const f = Math.floor((state.time - (p.born || 0)) * (bombArt.fps || 10)) % bombArt.frames;
+        ctx.drawImage(bombArt.img, f * bombArt.srcW, 0, bombArt.srcW, bombArt.srcH, Math.round(x - bombArt.w / 2), Math.round(y - bombArt.h / 2), bombArt.w, bombArt.h);
+        continue;
+      }
+      if (p.style === 'bomb' || p.style === 'orb') {   // placeholders until FX art: dark bomb with a pink glow / cyan orb
+        const r = ps.radiusPx || 4;
+        ctx.save();
+        ctx.shadowColor = ps.color || '#fff'; ctx.shadowBlur = 8 * BLUR;
+        ctx.fillStyle = p.style === 'bomb' ? '#3a1030' : (ps.color || '#80deea');
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = ps.color || '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+        if (p.style === 'bomb') { ctx.fillStyle = '#ffeb3b'; ctx.fillRect(x - 1, y - r - 3, 2, 3); }   // fuse spark
+        ctx.restore();
+        continue;
+      }
       if (p.style === 'bubble_big') {
         const by = C.GROUND_Y_PX - p.depth - 30 + Math.sin((state.time - (p.born || 0)) * 9) * 3;
         drawBubble(x, by, 14, 'fx_bubble_trap', state.time - (p.born || 0));
@@ -1919,7 +2249,7 @@
         if (fxa) {
           ctx.globalAlpha = 1;
           const f = Math.min(fxa.frames - 1, Math.floor(k * fxa.frames));
-          const size = e.big ? fxa.srcW * Math.max(1, Math.round((gridToPx(e.rGrids) * 2) / fxa.srcW)) : fxa.srcW;
+          const size = e.big ? fxa.w * Math.max(1, Math.round((gridToPx(e.rGrids) * 2) / fxa.w)) : fxa.w;   // logical size
           ctx.drawImage(fxa.img, f * fxa.srcW, 0, fxa.srcW, fxa.img.height, Math.round(cx - size / 2), Math.round(cy - size / 2), size, size);
           break;
         }
@@ -2037,7 +2367,7 @@
         const fr = unitFrame(u);
         const sprW = fr ? fr.spr.frameW : u.type.sizePx, sprH = fr ? fr.spr.frameH : u.type.sizePx;
         const dir = faceOf(u);
-        const footY = C.GROUND_Y_PX - u.depth - trapLift(u) - hopLift(u);
+        const footY = C.GROUND_Y_PX - u.depth - trapLift(u) - hopLift(u) - flyLift(u);
         // bow hand in Hera's 64px frames: x ~50 (of 64), arrow line y = 24 -> scaled to the sprite size
         const bx = unitPx(u) + Math.round(dir * (sprW * (50 / 64) - sprW / 2));
         const by = Math.round(footY - sprH + sprH * (24 / 64) - 6);   // fx first-arrow row is y ~6
@@ -2057,7 +2387,7 @@
         if (art && art.frames >= 6) {
           const f = Math.min(5, Math.floor(k * 6));
           // gather frames at 1x around Dia; burst frames scaled (half-steps) to the buff range
-          const sc = f < 3 ? 1 : Math.max(1, Math.round((rpx * 2 * 2) / art.srcW) / 2);
+          const sc = f < 3 ? 1 : Math.max(1, Math.round((rpx * 2 * 2) / art.w) / 2);   // logical width
           const w = art.w * sc, h = art.h * sc;
           ctx.drawImage(art.img, f * art.srcW, 0, art.srcW, art.img.height, Math.round(sx - w / 2), Math.round(cy - h / 2), w, h);
           break;
@@ -2076,6 +2406,74 @@
           ctx.strokeStyle = '#ffd54f'; ctx.lineWidth = 3;
           ctx.beginPath(); ctx.ellipse(sx, cy + 18, rpx * q, 10 * q + 2, 0, 0, Math.PI * 2); ctx.stroke();
         }
+        break;
+      }
+      case 'blast': {  // bomb impact: fx_bomb_blast.png, else a pink flash + ring as wide as the splash
+        const cx = gridToPx(e.x), gy = C.GROUND_Y_PX - (e.depth || 0);
+        const fxa = ART.fx('fx_bomb_blast');
+        if (fxa) {
+          const f = Math.min(fxa.frames - 1, Math.floor(k * fxa.frames));
+          ctx.globalAlpha = 1;
+          ctx.drawImage(fxa.img, f * fxa.srcW, 0, fxa.srcW, fxa.srcH, Math.round(cx - fxa.w / 2), gy - fxa.h + 4, fxa.w, fxa.h);
+          break;
+        }
+        ctx.fillStyle = 'rgba(255,111,181,0.55)';
+        ctx.beginPath(); ctx.arc(cx, gy - 8, 4 + 10 * k, 0, Math.PI * 2); ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(cx, gy + 1, Math.max(3, gridToPx(e.rGrids) * (0.5 + 0.5 * k)), 5, 0, 0, Math.PI * 2); ctx.stroke();
+        break;
+      }
+      case 'heartbomb': {   // Infectious Love: a heart falls from her to the zone, then bursts over it
+        const u = e.src, dir = e.dir;
+        const zx0 = gridToPx(e.x0 + dir * e.from), zx1 = gridToPx(e.x0 + dir * e.to), zc = (zx0 + zx1) / 2;
+        const gy = C.GROUND_Y_PX - (e.depth || 0);
+        const fallK = Math.min(1, e.t / e.fall);
+        ctx.globalAlpha = 1;
+        if (fallK < 1) {
+          const sy = gy - (u ? shotHeight(u) : 50);
+          const y = sy + (gy - 6 - sy) * fallK * fallK;
+          const x = gridToPx(e.x0) + (zc - gridToPx(e.x0)) * fallK;
+          ctx.fillStyle = '#ff4f9a'; ctx.strokeStyle = '#3a1030'; ctx.lineWidth = 1.5;
+          ctx.beginPath();   // little heart
+          ctx.moveTo(x, y + 5); ctx.bezierCurveTo(x - 9, y - 2, x - 4, y - 9, x, y - 4); ctx.bezierCurveTo(x + 4, y - 9, x + 9, y - 2, x, y + 5);
+          ctx.fill(); ctx.stroke();
+          break;
+        }
+        const bk = (e.t - e.fall) / Math.max(0.01, e.dur - e.fall);
+        const fxa = ART.fx('fx_infectious_love');
+        if (fxa) {
+          const f = Math.min(fxa.frames - 1, Math.floor(bk * fxa.frames));
+          ctx.drawImage(fxa.img, f * fxa.srcW, 0, fxa.srcW, fxa.srcH, Math.round(zc - fxa.w / 2), gy - fxa.h + 4, fxa.w, fxa.h);
+          break;
+        }
+        ctx.globalAlpha = Math.max(0, 1 - bk);
+        ctx.fillStyle = 'rgba(255,79,154,0.35)';
+        ctx.beginPath(); ctx.ellipse(zc, gy, Math.abs(zx1 - zx0) / 2 + 6, 8 + 6 * bk, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#ff80ab'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(zc, gy, Math.abs(zx1 - zx0) / 2 + 6 + 8 * bk, 10 + 8 * bk, 0, 0, Math.PI * 2); ctx.stroke();
+        for (let i = 0; i < 5; i++) {   // rising hearts / sparks
+          const hx = zc + (i - 2) * Math.abs(zx1 - zx0) / 5, hy = gy - 6 - bk * (18 + (i % 2) * 8);
+          ctx.fillStyle = i % 2 ? '#ffeb3b' : '#ff4f9a';
+          ctx.fillRect(Math.round(hx) - 1, Math.round(hy) - 1, 3, 3);
+        }
+        break;
+      }
+      case 'zap': {    // Shock tick: fx_shock.png over the unit, else a quick white-yellow bolt
+        const u = e.unit;
+        if (!u || u.hp <= 0) break;
+        const fr = unitFrame(u);
+        const h = fr ? fr.spr.frameH : u.type.sizePx;
+        const px = unitPx(u), footY = C.GROUND_Y_PX - u.depth - trapLift(u) - hopLift(u) - flyLift(u);
+        const fxa = ART.fx('fx_shock');
+        ctx.globalAlpha = 1;
+        if (fxa) {
+          const f = Math.floor(e.t * (fxa.fps || 12)) % fxa.frames;
+          ctx.drawImage(fxa.img, f * fxa.srcW, 0, fxa.srcW, fxa.srcH, px - Math.round(fxa.w / 2), Math.round(footY - h * 0.5 - fxa.h / 2), fxa.w, fxa.h);
+          break;
+        }
+        ctx.strokeStyle = k < 0.5 ? '#ffffff' : '#ffeb3b'; ctx.lineWidth = 2;
+        const top = footY - h - 6;
+        ctx.beginPath(); ctx.moveTo(px + 3, top); ctx.lineTo(px - 3, top + h * 0.3); ctx.lineTo(px + 2, top + h * 0.35); ctx.lineTo(px - 4, top + h * 0.7); ctx.stroke();
         break;
       }
       case 'text': {   // floating label
@@ -2113,13 +2511,14 @@
       const sheet = ART.ui('digits_' + n.kind);
       if (sheet) {
         const def = AM.UI['digits_' + n.kind];
-        const cw = def.cellW || 6, adv = def.advance || 5, ch = sheet.height;
+        const cw = def.cellW || 6, adv = def.advance || 5, ch = def.h || 9;   // logical cell size
+        const ss = ART.scaleOf(sheet, ch);                                    // sheet scale (2 for 2x digits)
         const w = ((text.length - 1) * adv + cw) * sc;
         let x = Math.round(cx - w / 2);
         const y = bottom - ch * sc;
         for (const c of text) {
           const gi = DIGIT_CHARS.indexOf(c);
-          if (gi >= 0) ctx.drawImage(sheet, gi * cw, 0, cw, ch, x, y, cw * sc, ch * sc);
+          if (gi >= 0) ctx.drawImage(sheet, gi * cw * ss, 0, cw * ss, ch * ss, x, y, cw * sc, ch * sc);
           x += adv * sc;
         }
       } else {
@@ -2243,20 +2642,33 @@
     const bg = ART.stage('bg');
     const far = ART.stage('far');
     // Always clear with the sky colour first (art may have transparent areas).
+    // Logical 1000x400 whatever the image size (a 2x bg_stage1.png is 2000x800) or the backing store.
     ctx.fillStyle = C.COLORS.sky;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(-4, -4, LW + 8, LH + 8);
     if (far) ctx.drawImage(far, 0, 0, AM.STAGE.far.w, AM.STAGE.far.h);
     if (bg) {
-      ctx.drawImage(bg, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(bg, 0, 0, LW, LH);
+      const sh = screenShakeOffset();
+      if (sh.x || sh.y) {   // camera shake: repeat the bg's edge pixels into the revealed strip (no sky-coloured gap)
+        const k = ART.scaleOf(bg, LH);
+        if (sh.x > 0) ctx.drawImage(bg, 0, 0, k, bg.naturalHeight, -sh.x, 0, sh.x, LH);
+        if (sh.x < 0) ctx.drawImage(bg, bg.naturalWidth - k, 0, k, bg.naturalHeight, LW, 0, -sh.x, LH);
+        if (sh.y > 0) ctx.drawImage(bg, 0, 0, bg.naturalWidth, k, -4, -sh.y, LW + 8, sh.y);
+        if (sh.y < 0) ctx.drawImage(bg, 0, bg.naturalHeight - k, bg.naturalWidth, k, -4, LH, LW + 8, -sh.y);
+      }
     } else {
       ctx.fillStyle = C.COLORS.ground;
-      ctx.fillRect(0, C.GROUND_Y_PX, canvas.width, canvas.height - C.GROUND_Y_PX);
+      ctx.fillRect(-4, C.GROUND_Y_PX, LW + 8, LH - C.GROUND_Y_PX + 4);
     }
   }
 
   function render() {
     trapLabelXs = [];
-    ctx.imageSmoothingEnabled = false;
+    if (+canvas.width !== LW * RES) applyRes();
+    beginFrame();
+    const shake = screenShakeOffset();
+    ctx.save();
+    if (shake.x || shake.y) ctx.translate(shake.x, shake.y);   // world layer only; the HUD stays put
     drawBackground();
 
     if (state.debug) drawGridDebug();
@@ -2271,6 +2683,7 @@
     drawProjectiles();
     state.effects.forEach(drawEffect);
     drawDamageNumbers();
+    ctx.restore();
     drawHud();
     updateButtons();
     updateInfoPanel();
@@ -2298,7 +2711,8 @@
       : `<span class="${cls} stars-ph" style="color:${r.color}" role="img" aria-label="${label}" title="${label}">${'★'.repeat(n)}</span>`;
   }
   /** Class badge (Mia's 20x20 weapon disc at 1x, or a text glyph fallback). */
-  const BADGE_GLYPH = { striker: '⚔', defender: '⛨', ranger: '➶' };
+  // support / bomber: placeholder glyphs until Mia's ui_badge_support / ui_badge_bomber land (\uFE0E = text, not emoji)
+  const BADGE_GLYPH = { striker: '⚔', defender: '⛨', ranger: '➶', support: '✚', bomber: '✈\uFE0E' };
   function badgeHtml(classId) {
     const cls = C.CLASSES[classId];
     const img = ART.ui('badge_' + classId);
@@ -2338,23 +2752,31 @@
     const frameArt = frameArtImg && frameArtImg.naturalWidth >= 2 * frameArtImg.naturalHeight ? frameArtImg : null;
     buttonBar.classList.toggle('has-spawn-frame', !!frameArt);
     if (frameArt) buttonBar.style.setProperty('--spawn-frame', cssUrl(frameArt)); else buttonBar.style.removeProperty('--spawn-frame');
+    // border-image-slice is in IMAGE pixels: 8 at 1x, 16 for a 2x frame (drawn 8 CSS px wide either way)
+    buttonBar.style.setProperty('--spawn-slice', String(Math.round(8 * ART.uiScale('button'))));
     const fac = C.FACTIONS[C.PLAYER_FACTION];
     const head = document.createElement('div');
     head.className = 'faction-head';
     head.innerHTML = `<span class="fac-swatches">${fac.colors.map((c) => `<i style="background:${c}"></i>`).join('')}</span>` +
       `<b>${esc(fac.name)}</b> <small>vs ${esc(C.FACTIONS[C.ENEMY_FACTION].name)} · unit names are placeholders</small>`;
     buttonBar.appendChild(head);
-    rosterByRarity(PLAYER_ROSTER).forEach((g, gi) => {
+    // Rows: the faction's rarity rows (Common, SR, SSR), then one "Unaffiliated" row for shared units (Margentelle).
+    const groups = rosterByRarity(PLAYER_ROSTER.filter((t) => !t.shared));
+    const shared = PLAYER_ROSTER.filter((t) => t.shared);
+    if (shared.length) groups.push({ rid: shared[0].rarityId, r: C.RARITIES[shared[0].rarityId], units: shared, shared: true });
+    groups.forEach((g, gi) => {
       const row = document.createElement('div');
-      row.className = `rarity-row rar-row-${g.rid}`;
-      row.dataset.rarity = g.rid;
+      row.className = `rarity-row rar-row-${g.shared ? 'shared' : g.rid}`;
+      row.dataset.rarity = g.shared ? 'shared' : g.rid;
       row.style.setProperty('--rar', g.r.color);
-      const keys = g.units.map((c) => c.key);
+      const keys = g.units.map((c) => c.key).filter(Boolean);
       const capNote = g.r.maxAlive ? ` · max ${g.r.maxAlive} alive at once` : '';
+      const keyNote = keys.length > 1 ? `keys ${keys[0]}–${keys[keys.length - 1]}` : keys.length ? `key ${keys[0]}` : 'no key';
+      const title = g.shared ? `Unaffiliated <span class="rar-sub" style="color:${g.r.color}">${esc(g.r.name)}</span>` : esc(g.r.name);
       row.innerHTML =
         (gi ? '<span class="rar-div" aria-hidden="true"></span>' : '') +
-        `<div class="rar-head">${starsHtml(g.rid, 'rar-head-stars', 2)}<b>${esc(g.r.name)}</b>` +
-        `<small>keys ${keys[0]}–${keys[keys.length - 1]}${g.rid === 'common' ? ' · no ability' : ' · ✦ ability'}${capNote}</small></div>` +
+        `<div class="rar-head">${starsHtml(g.rid, 'rar-head-stars', 2)}<b>${title}</b>` +
+        `<small>${keyNote}${g.rid === 'common' ? ' · no ability' : ' · ✦ ability'}${g.shared ? ' · free agents, any side' : ''}${capNote}</small></div>` +
         `<div class="row-units"></div>`;
       const rowUnits = row.querySelector('.row-units');
       for (const c of g.units) {
@@ -2384,7 +2806,7 @@
         const info =
           `<b>[${c.key}] ${esc(c.name)}</b>` +
           `<span class="tags">${tag}<span class="cls-name">${esc(cls.name)}</span><span class="rar-tag">${r.name}</span><span class="cost" title="${c.cost} AP">${apIconHtml('cost-ap')}${c.cost}</span></span>` +
-          `<small>HP ${c.hp} · DMG ${c.damage}/${c.cooldownSec}s · Rng ${c.rangeGrids} g · Spd ${c.speedGrids} g/s</small>` +
+          `<small>HP ${c.hp} · DMG ${c.damage}/${c.cooldownSec}s · Rng ${c.rangeGrids} g · Spd ${c.speedGrids} g/s${c.flying ? ' · ✈\uFE0E flies' : ''}</small>` +
           `<small class="ab"${A ? ` title="${esc(A.desc)}"` : ''}>${A ? '✦ ' + esc(A.name) + (c.projectile && c.projectile !== 'arrow' ? ` · ${esc(c.projectile)} shots` : '') : 'No ability'}</small>`;
         b.innerHTML =
           `<span class="pf${rFrame ? ' has-frame' : ''}">${pic}${frame}` +
@@ -2519,7 +2941,13 @@
         break;
       }
       case 'arrow_rain': L.push(`${dmg(A.damageMult)} to every enemy within ${g(A.radiusGrids)} of the most crowded spot in range`); break;
+      case 'infectious_love':
+        L.push(`Heart bomb: ${fmt(A.damage)} dmg to every enemy in the ${g(A.zoneToGrids - A.zoneFromGrids)} in front of her (incl. right under her)`,
+          `Lands ${fmt(A.fallSec)} s after the drop · casts when an enemy is in that zone`,
+          `${A.offCycle ? "Extra drop: doesn't reset her bomb timer" : 'Replaces one attack'} · flyers are hit only by her (she's anti-air)`);
+        break;
       default:
+        if (A.pending) { L.push('Kit reserved: not playable yet (art + implementation pending)'); break; }
         for (const [k, v] of Object.entries(A)) if (typeof v === 'number' && !/cooldown/i.test(k)) L.push(`${k}: ${fmt(v)}`);
     }
     return L;
@@ -2546,7 +2974,7 @@
       `<div class="ip-name"><b id="ip-name">${esc(t.name)}</b></div>` +
       `<div class="ip-tags">${starsHtml(t.rarityId, 'ip-stars', 2)}<span class="ip-rar" style="color:${t.rarity.color}">${esc(t.rarity.name)}</span>` +
       `<span class="ip-cls">${badgeHtml(t.classId)}${esc(t.cls.name)}</span></div>` +
-      `<div class="ip-fac"><span class="fac-swatches">${fac.colors.map((c) => `<i style="background:${c}"></i>`).join('')}</span>${esc(fac.name)} ${sideTag}</div>` +
+      `<div class="ip-fac"><span class="fac-swatches">${fac.colors.map((c) => `<i style="background:${c}"></i>`).join('')}</span>${esc(fac.name)}${t.pronouns ? ` · <small>${esc(t.pronouns)}</small>` : ''} ${sideTag}</div>` +
       `</div></div>` +
       (t.flavor ? `<p class="ip-flavor">“${esc(t.flavor)}”</p>` : '') +
       (t.bio ? `<p class="ip-bio">${esc(t.bio)}</p>` : '');
@@ -2558,7 +2986,17 @@
       const S = C.STATUSES.lifesteal;
       traits.push(`Each hit: +${t.onHit.lifesteal} ${S.name} (${fmt(S.hpPerStackPerSec)} HP/s per stack for ${fmt(S.durationSec)} s = ${fmt(S.hpPerStackPerSec * S.durationSec)} HP${S.trueDamage ? ', true damage' : ''}${S.healSource ? ', heals ' + (/placeholder/i.test(t.name) ? 'the attacker' : esc(t.name)) : ''})`);
     }
+    if (t.flying) traits.push(`Flying: only ranged units (Rangers, Supports, Bombers) can target it; not held by zones of control, floats over ground units`);
+    else if (t.antiAir) traits.push('Can hit flying units');
+    else traits.push(`Can't target flying units (Bombers)`);
+    if (t.splashGrids) traits.push(`Splash: ${t.damage} at the impact, ${Math.max(0, t.damage - t.splashLess)} to other enemies within ${fmt(t.splashGrids)} grid${t.splashGrids === 1 ? '' : 's'} of it`);
+    if (t.onHit && t.onHit.shock) {
+      const S = C.STATUSES.shock;
+      traits.push(`Each hit: ${S.name} (${fmt(S.damagePerTick)} dmg every ${fmt(S.tickSec)} s for ${fmt(S.durationSec)} s${S.trueDamage ? ', true damage' : ''}; each tick freezes it ${fmt(S.freezeSec)} s; doesn't stack, a new hit refreshes)`);
+    }
     if (t.rarity.maxAlive) traits.push(`Max ${t.rarity.maxAlive} ${esc(t.rarity.name)} units alive per side`);
+    if (t.shared) traits.push('Unaffiliated: either side can field her');
+    if (t.artPending) traits.push('<i>Art pending: placeholder look</i>');
     h += `<div class="ip-stats">` +
       statRow('hp', 'HP', `<span class="ip-hp">${u ? `${Math.ceil(Math.max(0, u.hp))} / ${t.hp}` : t.hp}</span>`) +
       statRow('damage', 'Damage', `${t.damage} / hit`, `${fmt(t.damage / t.cooldownSec, 1)} DPS`) +
@@ -2596,6 +3034,8 @@
         st.push(`<span class="s-ls">${C.STATUSES.lifesteal.name} ×${u.ls.length}</span> <small>(−${fmt(u.ls.length * C.STATUSES.lifesteal.hpPerStackPerSec)} HP/s, ${fmt(Math.max(0, left), 1)} s)</small>`);
       }
       if (u.speedBuffT > 0) st.push(`<span class="s-buff">Speed +${pct(u.speedBuffMult - 1)}</span> <small>(${fmt(u.speedBuffT, 1)} s)</small>`);
+      if (u.shock) st.push(`<span class="s-cc">${C.STATUSES.shock.name}</span> <small>(${fmt(C.STATUSES.shock.damagePerTick)}/s, ${fmt(Math.max(0, u.shock.until - state.time), 1)} s)</small>`);
+      if (u.freezeT > 0) st.push(`<span class="s-cc">Frozen</span>`);
       if (u.stun > 0) st.push(`<span class="s-cc">Stunned</span> <small>(${fmt(u.stun, 1)} s)</small>`);
       if (u.trapT > 0) st.push(`<span class="s-cc">Trapped</span> <small>(${fmt(u.trapT, 1)} s)</small>`);
       if (u.tauntT > 0 && u.tauntBy) st.push(`<span class="s-cc">Taunted</span> <small>(${fmt(u.tauntT, 1)} s)</small>`);
@@ -2684,6 +3124,9 @@
       (c.rarity.maxAlive ? `\nMax ${c.rarity.maxAlive} ${c.rarity.name} units alive at once per side.` : '') +
       (c.onHit && c.onHit.lifesteal ? `\nOn hit: +${c.onHit.lifesteal} ${C.STATUSES.lifesteal.name} (${C.STATUSES.lifesteal.desc})` : '') +
       (c.projectile && c.projectile !== 'arrow' ? `\nAttack: ${c.projectile} projectiles` : '') +
+      (c.flying ? '\nFlying: only Rangers, Supports and Bombers can hit it.' : '') +
+      (c.splashGrids ? `\nSplash: ${Math.max(0, c.damage - c.splashLess)} dmg within ${c.splashGrids} grid of the impact.` : '') +
+      (c.onHit && c.onHit.shock ? `\nOn hit: ${C.STATUSES.shock.name} (${C.STATUSES.shock.desc})` : '') +
       (c.bio ? `\n${c.bio}` : '') +
       `\n(Right-click or press and hold for full details)`;
   }
@@ -2849,8 +3292,8 @@
   function canvasPoint(e) {
     const rect = canvas.getBoundingClientRect();
     return {
-      x: (e.clientX - rect.left - canvas.clientLeft) * (canvas.width / canvas.clientWidth),
-      y: (e.clientY - rect.top - canvas.clientTop) * (canvas.height / canvas.clientHeight),
+      x: (e.clientX - rect.left - canvas.clientLeft) * (LW / canvas.clientWidth),    // CSS px -> logical px
+      y: (e.clientY - rect.top - canvas.clientTop) * (LH / canvas.clientHeight),     // (independent of RES)
     };
   }
   /** Hit test for one unit: distance score, or Infinity if (x, y) misses it. Generous box. */
@@ -2858,7 +3301,7 @@
     const walk = ART.sprite(u.type.id, u.team, 'walk');
     const w = walk ? walk.frameW * 0.6 : u.type.sizePx;
     const h = walk ? walk.frameH : u.type.sizePx;
-    const px = gridToPx(u.x), foot = C.GROUND_Y_PX - u.depth;
+    const px = gridToPx(u.x), foot = C.GROUND_Y_PX - u.depth - flyLift(u);
     const dx = Math.abs(x - px);
     if (dx > Math.max(w / 2, 14) + 10 || y < foot - h - 34 || y > foot + 14) return Infinity;
     return dx + Math.abs(y - (foot - h / 2)) * 0.25;
@@ -2939,7 +3382,7 @@
     if (e.key === 'Escape' && infoOpen()) { closeInfo(); e.preventDefault(); return; }
     if (!state || e.ctrlKey || e.metaKey || e.altKey) return;
     // Shift+1..9 (layout-independent via e.code): use the ability of the frontmost ready unit.
-    const m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code || '');
+    const m = /^(?:Digit|Numpad)([0-9])$/.exec(e.code || '');   // 0 = Margentelle (Unaffiliated row)
     if (e.shiftKey && m) {
       if (!autoCast && !state.over) castBySlot(m[1]);
       e.preventDefault();
@@ -3029,7 +3472,7 @@
       let enemy = isFaction(opts.enemy) && opts.enemy !== side ? opts.enemy
         : (side === C.ENEMY_FACTION ? C.PLAYER_FACTION : C.ENEMY_FACTION);
       if (!isFaction(enemy) || enemy === side) enemy = side !== DEFAULT_ENEMY_FACTION ? DEFAULT_ENEMY_FACTION : DEFAULT_PLAYER_FACTION;
-      if (enemy === side) enemy = Object.keys(F).find((id) => id !== side);
+      if (enemy === side) enemy = SIDE_IDS.find((id) => id !== side);
       C.PLAYER_FACTION = side;
       C.ENEMY_FACTION = enemy;
       refreshRosters();
@@ -3064,12 +3507,15 @@
   };
 
   buildButtons(); // placeholder buttons visible immediately
+  beginFrame();
   ctx.fillStyle = C.COLORS.sky;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, LW, LH);
   ctx.fillStyle = C.COLORS.text;
   ctx.font = '16px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('Loading…', canvas.width / 2, canvas.height / 2);
+  ctx.fillText('Loading…', LW / 2, LH / 2);
+  // Backing store follows the screen: window resize / rotation / moving to a screen with another DPR.
+  if (typeof addEventListener === 'function') addEventListener('resize', () => { applyRes(); });
 
   ART.loadAll({ player: C.COLORS.player, enemy: C.COLORS.enemy })
     .catch((e) => console.warn('[art] loading failed, using placeholders', e))
@@ -3082,7 +3528,10 @@
   // Hooks for testing/console tinkering: TD.spawn('player','ranger_ssr'), TD.sim.battle(...)
   window.TD = {
     get state() { return state; },
+    /** Flying / targeting rules (the same functions the sim uses; Brian's sim can mirror them). */
+    rules: { canTarget, blocksMove, zocHolder: (u) => zocHolder(u), pickTarget: (u) => pickTarget(u), moveLimit: (u, x) => moveLimit(u, x) },
     spawn: spawnUnit,
+    addStatus: (t, id, n, src) => addStatus(t, id, n, src),   // test hook (statuses: lifesteal, shock)
     playerSpawn,
     restart: newGame,
     renderOnce: () => render(),   // test hook: draw one frame now (visual checks / render-cost timing)
@@ -3110,12 +3559,27 @@
     unitScreenPos(u) {
       const walk = ART.sprite(u.type.id, u.team, 'walk');
       const h = walk ? walk.frameH : u.type.sizePx;
-      return { x: gridToPx(u.x), y: C.GROUND_Y_PX - u.depth - h * 0.5 };
+      return { x: gridToPx(u.x), y: C.GROUND_Y_PX - u.depth - flyLift(u) - h * 0.5 };
     },
     /** What a unit currently shows: { src, mode, frame, frames } or null (placeholder shape). */
     frameOf(u) { const f = unitFrame(u); const a = u.anim || {}; return f ? { src: f.spr.src, mode: f.spr.mode, frame: f.frame, frames: f.spr.frames, size: f.spr.frameW, faces: f.spr.faces, face: faceOf(u), mirror: flipX(f.spr, faceOf(u)), phase: a.phase, rate: a.rate, speed: a.speed, moving: a.moving, px: a.px } : null; },
     facing: { faceOf: (u) => faceOf(u), dirOf: (u) => dirOf(u), flipX },
     animate(dt) { animateUnits(dt); },   // test hook: advance the visual animation only (no simulation)
+    /** Attack-impact effects (visual only). setScreenShake persists to localStorage 'td.screenShake'. */
+    impact: {
+      config: IMP, get vfx() { return vfx; },
+      setEnabled(on) { vfx.enabled = on !== false; },
+      setScreenShake(on) { vfx.screenOn = on !== false; try { localStorage.setItem(SHAKE_KEY, vfx.screenOn ? '1' : '0'); } catch (e) { /* blocked */ } },
+      reloadPref() { vfx.screenOn = loadShakePref(); return vfx.screenOn; },
+      hitFrameOf: (id, frames) => hitFrameOf(typeById(id), frames),
+      get screenShake() { return vfx.screenOn; },
+      offset: () => screenShakeOffset(),
+      unitShake: (u) => unitShakePx(u),
+    },
+    /** Backing-store scale (device px per logical px) and logical size. */
+    get res() { return RES; },
+    logical: { w: LW, h: LH },
+    applyRes,
     sim: {
       /** Pause/resume the real-time loop. */
       pause(p) { paused = p !== false; },

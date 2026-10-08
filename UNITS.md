@@ -222,7 +222,51 @@ under the spawn bar (hover a chip).
   anything else. Separately, no unit can ever walk through a living enemy (it stops 1 grid
   short), so Defenders form a wall.
 - **Ranger**: long range (9–11 grids), 75 HP, 10 damage per hit at every rarity. Fires visible projectiles that do damage when
-  they land. If the target dies first, the shot fizzles.
+  they land. If the target dies first, the shot fizzles. **Can hit flyers.**
+- **Support**: 100 HP, 10 damage, ranged (9 grids, 1.4 s, orb projectile). Role (healer / buffer / debuffer) comes from its
+  ability. **Can hit flyers.**
+- **Bomber**: 75 HP, 10 damage, **2.4 s** attack interval, 8.5-grid range, slow bombs (14 grids/s). **Flying.** Bombs splash:
+  full damage on the target, damage − 5 on every other enemy within 1 grid of the impact (10 / 5 / 5). **Can hit flyers.**
+
+## Flying rules (boss)
+| Attacker | Can target / hit a flyer? |
+|---|---|
+| Striker, Defender (grounded melee) | **No**: never targets bombers; their abilities skip flyers too |
+| Ranger, Support | Yes (they stop and shoot flyers in range) |
+| Bomber | Yes |
+- A flyer is **not held** by a Defender's zone of control and is **not blocked** by ground units (no-pass rule is per layer:
+  air blocks air, ground blocks ground). Melee units walk under flyers without stopping.
+- A bomber still stops to attack a target in its range, like any ranged unit (it doesn't strafe; open question for the boss).
+- Code: `canTarget(a, o)`, `blocksMove(u, o)` and the flyer check in `zocHolder` in `game.js` (`TD.rules` for tests / Brian's sim).
+
+## Margentelle (`margentelle`): Unaffiliated SSR Bomber
+Faction `neutral` ("Unaffiliated", `FACTIONS.neutral.shared`): her own row under SSR on the spawn bar for **either side**, key
+`0` (`Shift`+`0` casts). The enemy AI may buy her too (`aiSpawn: true`). 75 HP · 10 dmg · 2.4 s · 8.5 grids · 5 AP · flying.
+- **Shock** (every normal hit, `STATUSES.shock`): 1 damage per second for 3 s (true damage, so armor doesn't round it to 0),
+  each tick freezes the unit ~0.15 s (no moving / attacking, pose held). **No stacking**: a new hit refreshes the duration; the
+  tick schedule keeps running, so a refresh never adds a tick.
+- **Splash** (bomber class): 10 on the target, 5 to other enemies within 1 grid of the impact.
+- **Infectious Love** (`ABILITIES.infectious_love`): drops a heart bomb on the 2 grids in front of her (incl. right under her):
+  **20 damage** (Brian's balance start; boss may raise to 30) to every enemy there, landing 0.35 s later. Cooldown **12 s**
+  (placeholder), first cast after 4 s. Off-cycle (doesn't wait for or reset her 2.4 s bomb timer). Auto and the enemy AI cast
+  it whenever an enemy is in the zone; in manual mode, tap her or `Shift`+`0`.
+- Flavor (Petra): "She marks her debts in lightning. Pay up, or freeze." Bio: placeholder until Petra's.
+- Art: pending (Mia). Until `margentelle_walk.png` exists she borrows `elf_ranger_*` tinted pink (`placeholderArt`).
+
+## Reserved slots (config only; art + kits pending, not fieldable)
+Factions marked `reserved: true` + `ownRoster: true`; never offered by the menu, `?side=`, the swap button or the AI. Their
+abilities are data with `pending: true` (no handler yet, so they never cast). All SR.
+| Faction | Unit (id) | Class | Kit |
+|---|---|---|---|
+| Tideglass (Mia) | Wynn (`tideglass_wynn`), she/her | Support healer | Tide Mercy: heal weakest ally 15 over 2 s; under half HP: ticks +5 |
+| Tideglass (Mia) | Puck (`tideglass_puck`), he/him | Bomber archer | Drift Shot: slow arrow bursts 20 AoE after a short fall; tags a flyer → also hits the ground unit under it |
+| Cinder Choir (Mia) | Bram (`cinder_bram`), he/him | Support debuffer | Ash Mark: −2 armor for 2 s; next ally hit on it +2 |
+| Cinder Choir (Mia) | Sable (`cinder_sable`), she/her | Bomber mage | Ember Drop: 18 AoE + 1 s burn puddle |
+| Moonshard (Gab) | Neris (`moonshard_neris`), she/her | Support healer | Shard Mend: heal weakest ally 12 over 2 s; debuffed: cleanse + ticks +4 |
+| Moonshard (Gab) | Orin (`moonshard_orin`), he/him | Bomber mage | Crescent Fall: 16 AoE, silences the target 1 s |
+| Briarwake (Gab) | Fern (`briarwake_fern`), she/her | Support buffer | Root Guard: nearest ally −20% damage taken for 2 s |
+| Briarwake (Gab) | Bramble (`briarwake_bramble`), he/him | Bomber archer | Briar Burst: 18 AoE, halves move speed 1 s |
+Petra's flavor lines are in config for Neris, Orin, Fern and Bramble.
 
 ## Rarities
 Rarity no longer multiplies HP, damage or cost (see Stat standard).
