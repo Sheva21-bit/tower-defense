@@ -29,27 +29,58 @@ const CONFIG = {
   TOWER_HP: 1000,
   TOWER_WIDTH_GRIDS: 6,     // each tower occupies this many grids at its end of the stage
 
-  // ---- Player economy ----
-  START_RESOURCE: 50,
-  RESOURCE_PER_SEC: 10,
-  MAX_RESOURCE: 250,
+  // ---- Economy: ACTION POINTS (AP), set by the boss. SAME rules for the player and the enemy AI ----
+  // Each side starts with `start` AP and gains `perSec` AP per second up to `max`. AP are spent in whole
+  // numbers (unit costs: STAT_STANDARD.apCostByRarity); the internal pool is fractional so the gauge can
+  // show progress toward the next pip.
+  AP: {
+    start: 3,
+    perSec: 1,
+    max: 10,      // confirmed by the boss
+  },
 
   // ---- Enemy AI ----
-  // The enemy earns resource exactly like the player and buys from the same roster.
+  // The enemy earns AP exactly like the player (CONFIG.AP) and buys from its roster.
   // It picks its next unit by ENEMY_WEIGHT (rarity weight x unit weight) and saves up for it.
-  ENEMY_START_RESOURCE: 50,
-  ENEMY_RESOURCE_PER_SEC: 10,
-  ENEMY_FIRST_SPAWN_SEC: 3,       // never spawns before this
+  ENEMY_FIRST_SPAWN_SEC: 3,       // AI pacing: never spawns before this (it still earns AP meanwhile)
 
   // ---- Combat rules ----
   NO_PASS_GAP_GRIDS: 1,           // a unit can never walk closer than this to/through a living enemy
 
-  // ---- Classes: base stats (Common level) ----
-  //   hp, damage            : hit points / damage per attack
+  // =====================================================================================
+  // ---- STAT STANDARD (set by the boss) — HP and damage per hit come ONLY from here ----
+  // =====================================================================================
+  // No rarity multipliers and no per-slot / per-unit overrides for hp or damage: the unit
+  // builder below reads these tables directly (an hp/damage override is ignored with a warning).
+  // Ability damage that scales from damage per hit (Cleave 130%, Dash Strike 250%, Pela's pop
+  // 120%, ...) follows these values automatically.
+  STAT_STANDARD: {
+    // HP per class: the SAME for every rarity.
+    hpByClass: { striker: 100, defender: 150, ranger: 75 },   // ranger 75: boss update (was 50)
+    // Damage per hit, by rarity then class.
+    damageByRarity: {
+      // Boss update (12:32): ALL Rangers 10 per hit (was 15); Defenders +10 (Common 15, SR/SSR 20).
+      common: {
+        striker:  5,
+        defender: 15,  // was 5 (+10, boss)
+        ranger:   10,  // ALL Rangers deal 10 (was 15)
+      },
+      sr:  { striker: 10, defender: 20, ranger: 10 },   // Defender 20 (was 10), Ranger 10 (was 15)
+      ssr: { striker: 10, defender: 20, ranger: 10 },   // Defender 20 (was 10), Ranger 10 (was 15)
+    },
+    // Spawn cost in AP, by rarity (same for every class and faction). A unit may set `apCost` in
+    // FACTION_UNITS (or a roster slot) for a future "some units cost more" exception.
+    apCostByRarity: {
+      common: 2,    // ALL Common units
+      sr:     3,    // ALL SR units (incl. Dia, Raven, Pela)
+      ssr:    5,    // ALL SSR units (confirmed by the boss)
+    },
+  },
+
+  // ---- Classes: base stats (everything except HP / damage, which are in STAT_STANDARD) ----
   //   speedGrids            : grids moved per second
   //   rangeGrids            : attacks when an enemy unit/tower is within this many grids
   //   cooldownSec           : seconds between attacks
-  //   cost                  : resource cost (before rarity multiplier)
   //   armor                 : fraction of incoming damage ignored (0..1)
   //   blockGrids            : DEFENDER ZONE OF CONTROL. Any enemy within this many grids of a
   //                           living defender is HELD: it cannot walk on and must attack that
@@ -59,34 +90,40 @@ const CONFIG = {
     striker: {
       name: 'Striker', tag: 'STR', color: '#ffb74d',
       desc: 'Damage dealer with balanced health. Short range.',
-      hp: 120, damage: 15, speedGrids: 3.5, rangeGrids: 1.8, cooldownSec: 1.0, cost: 50,
+      speedGrids: 3.5, rangeGrids: 1.8, cooldownSec: 1.0,
       armor: 0,
     },
     defender: {
       name: 'Defender', tag: 'DEF', color: '#90a4ae',
       desc: 'High health, 25% armor. Enemies in its zone of control must stop and fight it.',
-      hp: 280, damage: 8, speedGrids: 2.2, rangeGrids: 1.5, cooldownSec: 1.2, cost: 60,
+      // BOSS RULE: defenders attack LESS often than everyone else. The defender attack interval
+      // must stay ABOVE the striker (1.0 s) and ranger (1.4 s) intervals. (Checked at load:
+      // a console warning fires if a future tweak breaks it.)
+      speedGrids: 2.2, rangeGrids: 1.5, cooldownSec: 1.6,
       armor: 0.25, blockGrids: 1.5,
     },
     ranger: {
       name: 'Ranger', tag: 'RNG', color: '#aed581',
       desc: 'Attacks from far away with projectiles. Low health.',
-      hp: 65, damage: 13, speedGrids: 3.0, rangeGrids: 9, cooldownSec: 1.4, cost: 55,
+      speedGrids: 3.0, rangeGrids: 9, cooldownSec: 1.4,
       armor: 0, ranged: true, projectileSpeedGrids: 40,
     },
   },
 
-  // ---- Rarities: multipliers applied to the class base stats ----
+  // ---- Rarities: visuals / AI weight / cap (HP, damage and AP cost come from STAT_STANDARD) ----
   //   enemyWeight : how often the enemy AI picks units of this rarity (relative)
   //   sizeMult    : placeholder square size (visual only)
   //   pips        : rarity marker pips drawn on the unit (visual only)
+  //   stars       : rarity stars shown in the spawn menu (ui_stars_<rarity>.png; visual only)
+  //   maxAlive    : max units of this rarity ALIVE at once PER SIDE (all classes combined);
+  //                 null/absent = no cap. Applies to the player and the enemy AI alike.
   RARITIES: {
-    common: { name: 'Common', short: 'C',   color: '#9e9e9e', glow: null,
-              hpMult: 1.0, damageMult: 1.0, costMult: 1.0, enemyWeight: 6,   sizeMult: 1.0,  pips: 1 },
-    sr:     { name: 'SR',     short: 'SR',  color: '#9ecbff', glow: null,
-              hpMult: 1.6, damageMult: 1.5, costMult: 2.2, enemyWeight: 2.5, sizeMult: 1.12, pips: 2 },
-    ssr:    { name: 'SSR',    short: 'SSR', color: '#ffd54f', glow: '#ffd54f',
-              hpMult: 2.5, damageMult: 2.2, costMult: 3.6, enemyWeight: 1,   sizeMult: 1.25, pips: 3 },
+    common: { name: 'Common', short: 'C',   color: '#9e9e9e', glow: null, stars: 1, maxAlive: 3,
+              enemyWeight: 6,   sizeMult: 1.0,  pips: 1 },
+    sr:     { name: 'SR',     short: 'SR',  color: '#9ecbff', glow: null, stars: 2,
+              enemyWeight: 2.5, sizeMult: 1.12, pips: 2 },
+    ssr:    { name: 'SSR',    short: 'SSR', color: '#ffd54f', glow: '#ffd54f', stars: 3,
+              enemyWeight: 1,   sizeMult: 1.25, pips: 3 },
   },
 
   // ---- Factions ----
@@ -109,19 +146,22 @@ const CONFIG = {
   ENEMY_FACTION: 'deva',
 
   // ---- Roster slots: the same 9 slots for every faction (stats/abilities mirror) ----
-  //   overrides: optional per-slot stat overrides (final values, after multipliers)
+  // Order = spawn-menu order: grouped by rarity (Common, SR, SSR), each in class order
+  // (Striker, Defender, Ranger). Hotkeys follow it: Common 1-3, SR 4-6, SSR 7-9.
+  //   overrides: optional per-slot stat overrides (final values; NOT hp / damage / cost, see STAT_STANDARD)
+  //   apCost   : optional AP cost exception for this slot (default STAT_STANDARD.apCostByRarity)
   //   ability  : id from ABILITIES, or null (Commons have none)
-  //   key      : keyboard shortcut (player roster)
+  //   key      : keyboard shortcut (player roster); Shift+key casts that slot's ability
   ROSTER_SLOTS: [
-    { class: 'striker',  rarity: 'common', ability: null,            key: '1', overrides: { cost: 45 } },
-    { class: 'striker',  rarity: 'sr',     ability: 'cleave',        key: '2' },
-    { class: 'striker',  rarity: 'ssr',    ability: 'dash_strike',   key: '3', overrides: { speedGrids: 4, hp: 330, cost: 185 } },
-    { class: 'defender', rarity: 'common', ability: null,            key: '4' },
-    { class: 'defender', rarity: 'sr',     ability: 'shield_bash',   key: '5', overrides: { cost: 115 } },
-    { class: 'defender', rarity: 'ssr',    ability: 'fortress',      key: '6' },
-    { class: 'ranger',   rarity: 'common', ability: null,            key: '7', overrides: { cost: 45 } },
-    { class: 'ranger',   rarity: 'sr',     ability: 'piercing_shot', key: '8', overrides: { rangeGrids: 10 } },
-    { class: 'ranger',   rarity: 'ssr',    ability: 'arrow_rain',    key: '9', overrides: { rangeGrids: 11, cost: 210 } },
+    { class: 'striker',  rarity: 'common', ability: null,            key: '1' },
+    { class: 'defender', rarity: 'common', ability: null,            key: '2' },
+    { class: 'ranger',   rarity: 'common', ability: null,            key: '3' },
+    { class: 'striker',  rarity: 'sr',     ability: 'cleave',        key: '4' },
+    { class: 'defender', rarity: 'sr',     ability: 'shield_bash',   key: '5' },
+    { class: 'ranger',   rarity: 'sr',     ability: 'piercing_shot', key: '6', overrides: { rangeGrids: 10 } },
+    { class: 'striker',  rarity: 'ssr',    ability: 'dash_strike',   key: '7', overrides: { speedGrids: 4 } },
+    { class: 'defender', rarity: 'ssr',    ability: 'fortress',      key: '8' },
+    { class: 'ranger',   rarity: 'ssr',    ability: 'arrow_rain',    key: '9', overrides: { rangeGrids: 11 } },
   ],
 
   // ---- Per-faction unit identity (ALL NAMES ARE PLACEHOLDERS until the backstory lands) ----
@@ -132,38 +172,56 @@ const CONFIG = {
   //   Named characters can also customise their kit while keeping the slot's stats:
   //   ability   : replaces the slot's ability (id from ABILITIES, or null for none)
   //   projectile: projectile style for ranged attacks (id from PROJECTILES; default 'arrow')
-  //   overrides : per-unit stat overrides applied after the slot's overrides (use sparingly)
-  //   bio       : short character note (shown in the tooltip)
+  //   overrides : per-unit stat overrides applied after the slot's overrides (use sparingly; NOT hp / damage / cost)
+  //   apCost    : optional AP cost exception for this unit (future "some units cost more")
+  //   bio       : short character note (shown in the tooltip + info panel)
+  //   flavor    : one-line flavor text for the unit info panel (from Petra's STORY.md; copied here,
+  //               STORY.md is never loaded at runtime)
   //   onHit     : statuses added by each NORMAL attack that hits a unit, e.g. { lifesteal: 1 }
   //               (stacks per hit; towers are immune). See STATUSES.
+  //   hitFrame  : attack-strip frame index on which the hit lands (default 0). The strip is
+  //               rotated so this frame shows at the moment of the hit; frames before it read
+  //               as the wind-up leading into the next hit. Art-only; does not change timing.
   FACTION_UNITS: {
     valkyrie: {
       striker:  { common: { name: 'Valkyrie Footman (placeholder)', art: 'elf_common_striker' },
                   sr:     { name: 'Dia', id: 'valkyrie_dia', spriteSize: 64,
                             ability: 'rallying_charge',
-                            bio: 'Main character. Her battle cry lights up the squad.' },
+                            bio: 'Main character. Her battle cry lights up the squad.',
+                            flavor: 'The youngest blade of the sisterhood. Too honest to stay quiet, too kind to stay out of the fight.' },
                   ssr:    { name: 'Valkyrie SSR Striker (placeholder)', art: 'elf_ssr_striker' } },
       defender: { common: { name: 'Valkyrie Shieldbearer (placeholder)', art: 'elf_common_defender' },
-                  sr:     { name: 'Valkyrie SR Defender (placeholder)', art: 'elf_defender', spriteSize: 64 },
+                  sr:     { name: 'Grey', id: 'valkyrie_defender', spriteSize: 64,   // own art (Mia): valkyrie_defender_*.png
+                            ability: 'grey_shield_bash',
+                            bio: 'A young plate-armored knight with a huge round shield and a double-bladed axe.',
+                            flavor: "He knocked on the Valkyries' gate every day for a year. Now nothing gets past him." },   // Petra, STORY.md
                   ssr:    { name: 'Valkyrie SSR Defender (placeholder)', art: 'elf_ssr_defender' } },
       ranger:   { common: { name: 'Valkyrie Archer (placeholder)', art: 'elf_common_ranger' },
-                  sr:     { name: 'Valkyrie SR Ranger (placeholder)', art: 'elf_ranger', spriteSize: 64 },
+                  sr:     { name: 'Hera', id: 'valkyrie_ranger', spriteSize: 64,   // own art (Mia): valkyrie_ranger_*.png
+                            ability: 'nimble_shot',
+                            bio: 'Half human, half angel, with a single wing. A blunt, cheerful tomboy with a sharp eye.',
+                            flavor: 'One wing, two arrows, zero patience. She never learned to fly, so she learned never to miss.' },
                   ssr:    { name: 'Valkyrie SSR Ranger (placeholder)', art: 'elf_ssr_ranger' } },
     },
     deva: {
       striker:  { common: { name: 'Deva Footman (placeholder)', art: 'darkelf_common_striker' },
                   sr:     { name: 'Raven', id: 'deva_raven', spriteSize: 64,
                             ability: 'dark_cloud', onHit: { lifesteal: 1 },
-                            overrides: { damage: 22 },   // 23 -> 22 offsets Life Steal (sims: ~49% vs a Cleave SR striker)
-                            bio: 'Dia\'s foil. Her strikes leave a draining curse that feeds her.' },
+                            bio: 'Dia\'s foil. Her strikes leave a draining curse that feeds her.',
+                            flavor: 'A nun who stopped believing the sermons but kept the habit. She takes what she\'s owed, one drop at a time.' },
                   ssr:    { name: 'Deva SSR Striker (placeholder)', art: 'darkelf_ssr_striker' } },
       defender: { common: { name: 'Deva Shieldbearer (placeholder)', art: 'darkelf_common_defender' },
-                  sr:     { name: 'Deva SR Defender (placeholder)', art: 'darkelf_defender', spriteSize: 64 },
+                  sr:     { name: 'Brawn', id: 'deva_defender', spriteSize: 64,   // own art (Mia): deva_defender_*.png
+                            ability: 'endure',
+                            hitFrame: 2,   // attack strip: 0-1 wind-up, 2 hit (red arc), 3 follow-through
+                            bio: 'A mortal ex-pit fighter with pale tattoos on both bare arms, a big shield and a spiked mace.',
+                            flavor: "Every tattoo is a fight he walked away from. He's running out of room." },   // Petra
                   ssr:    { name: 'Deva SSR Defender (placeholder)', art: 'darkelf_ssr_defender' } },
       ranger:   { common: { name: 'Deva Archer (placeholder)', art: 'darkelf_common_ranger' },
                   sr:     { name: 'Pela', id: 'deva_ranger', spriteSize: 64,
                             ability: 'bubble_trap', projectile: 'bubble',
-                            bio: 'Timid elf girl who values her friends, but gets excited causing mayhem. Fights with water bubbles.' },
+                            bio: 'Timid elf girl who values her friends, but gets excited causing mayhem. Fights with water bubbles.',
+                            flavor: 'Shy, sweet, fiercely loyal, and a little too delighted when things go pop.' },
                   ssr:    { name: 'Deva SSR Ranger (placeholder)', art: 'darkelf_ssr_ranger' } },
     },
     elf: {
@@ -255,6 +313,31 @@ const CONFIG = {
       damageMult: 1.5, stunSec: 1.5,
       desc: 'Bashes its target for 150% damage and stuns it for 1.5 s.',
     },
+    grey_shield_bash: {   // Grey (Valkyrie SR Defender). NOT the Deva SR Defender's shield_bash above.
+      name: 'Shield Bash', cooldownSec: 20, firstCooldownSec: 2,
+      triggerGrids: 2.5,       // cast condition: an enemy within this many grids IN FRONT of him
+      chargeGrids: 2,          // he charges forward up to this far (stops early at the enemy tower)
+      chargeSpeedGrids: 10,    // charge speed, grids per second (2 grids = 0.2 s)
+      knockbackGrids: 3,       // every enemy he bumps into is shoved this far (clamped at its own tower)
+      knockbackSec: 0.25,      // ...as a smooth push over this long (not a teleport)
+      damagePct: 0,            // % of his damage per hit dealt to each bumped enemy (0 = no damage)
+      interruptsAttack: true,  // a shoved unit's attack wind-up restarts (its attack timer goes back to full)
+      offCycle: true,          // a charge is a move, not a swing: castable whenever ready (no wait for his slow
+                               // 1.6 s attack timer), and does NOT reset his attack timer; he can't attack while charging
+      desc: 'Charges forward with his shield up. Every enemy he runs into is knocked back and its attack is interrupted; he keeps going to the end of the charge.',
+    },
+    endure: {   // Brawn (Deva SR Defender)
+      name: 'Endure', cooldownSec: 15, firstCooldownSec: 3,   // cooldown 15 s: PLACEHOLDER (boss)
+      durationSec: 5,          // he plants the shield: no walking for 5 s, but keeps attacking whatever is in range
+      damageReduction: 0.2,    // takes 20% less damage while it lasts (true damage, e.g. Life Steal ticks, ignores it
+                               // like it ignores armor and auras)
+      knockbackGrids: 1,       // every enemy whose DIRECT attack hits him (melee hit or arrow; not DoT / AoE abilities)
+      knockbackSec: 0.15,      // is shoved back 1 grid over 0.15 s (Grey's knockback: clamped at towers, ccImmune immune)
+      interruptsAttack: true,  // ...and its attack wind-up restarts (attack timer back to full)
+      offCycle: true,          // a stance, not a swing: castable whenever ready, doesn't cost him an attack
+      slamFxSec: 0.33, knockFxSec: 0.33,
+      desc: 'Plants his shield and stands his ground: takes less damage, and every enemy whose attack hits him is knocked back.',
+    },
     fortress: {
       name: 'Fortress', cooldownSec: 8, firstCooldownSec: 1,
       auraGrids: 4, allyDamageReduction: 0.25,
@@ -272,11 +355,37 @@ const CONFIG = {
       popRadiusGrids: 1.8, popDamageMult: 1.2,
       desc: 'Launches a big water bubble at the most crowded spot in range. Enemies within 1.5 grids are trapped for 1.5 s (they float and can\'t move or attack), then it pops for 120% damage to enemies within 1.8 grids.',
     },
+    nimble_shot: {   // Hera (Valkyrie SR Ranger). Replaces Piercing Shot.
+      name: 'Nimble Shot', cooldownSec: 5, firstCooldownSec: 2,   // cooldown 5 s: boss said "for now"
+      arrows: 2,          // arrows per cast, each a normal attack hit (standard projectile, onHit applies)
+      gapSec: 0.15,       // time between arrows
+      damageMult: 1.0,    // per arrow (100% = her damage per hit)
+      offCycle: true,     // extra burst ON TOP of her attack rhythm: castable whether or not her normal attack
+                          // is ready, does NOT reset her attack timer; no normal attack starts during the burst
+      fxSec: 0.3,         // fx_nimble_shot.png (4 frames) play time at her bow
+      desc: 'Fires two arrows in quick succession at her current target, each a normal hit. If the target falls after the first arrow, the second goes to the next enemy in range (or is skipped).',
+    },
     arrow_rain: {
       name: 'Arrow Rain', cooldownSec: 9, firstCooldownSec: 2,
       radiusGrids: 3, damageMult: 1.8,
       desc: 'Rains arrows on the most crowded spot in range: 180% damage to every enemy within 3 grids.',
     },
+  },
+
+  // ---- Floating damage numbers (visual only) ----
+  // Toggle in game with key N (or the "123" button on phones); the choice is saved in
+  // localStorage and overrides this default.
+  SHOW_DAMAGE_NUMBERS: true,
+  DAMAGE_NUMBERS: {
+    maxActive: 40,           // anti-clutter: oldest numbers are dropped beyond this
+    maxPerTarget: 4,         // anti-clutter: max numbers over one unit; fresh ones fan out sideways/up
+    durationSec: 0.6,        // float + fade time
+    risePx: 12,              // how far a number floats up
+    jitterPx: 3,             // random x offset (+/-) so stacked hits don't sit on top of each other
+    mergeSec: 0.25,          // life steal ticks (red) / heals (green) on the same unit within this window merge into one number
+    hitScale: 2,             // direct hits (white) drawn at 2x; DoT (red) and heals (green) at 1x
+    dotScale: 1,
+    healScale: 1,
   },
 
   // ---- Colors ----
@@ -294,9 +403,10 @@ CONFIG.GRID_COUNT = CONFIG.STAGE_WIDTH_PX / CONFIG.GRID_SIZE_PX;
 
 /*
  * Resolve the roster: for every faction x roster slot -> final unit type
- * (class base x rarity multipliers + slot overrides). CONFIG.UNIT_TYPES holds all of them;
+ * (HP / damage / AP cost from STAT_STANDARD; other stats = class base + slot / unit overrides).
+ * CONFIG.UNIT_TYPES holds all of them;
  * CONFIG.rosterOf(factionId) gives one faction's 9 units in slot order.
- * (Costs round to 5, hp/damage to whole numbers.)
+ * `cost` = spawn cost in AP (whole number): ident.apCost ?? slot.apCost ?? STAT_STANDARD.apCostByRarity.
  */
 CONFIG.UNIT_TYPES = [];
 for (const [factionId, faction] of Object.entries(CONFIG.FACTIONS)) {
@@ -307,6 +417,13 @@ for (const [factionId, faction] of Object.entries(CONFIG.FACTIONS)) {
     if (!rar) throw new Error(`Roster slot: unknown rarity ${slot.rarity}`);
     if (slot.ability && !CONFIG.ABILITIES[slot.ability]) throw new Error(`Roster slot: unknown ability ${slot.ability}`);
     const ident = ((CONFIG.FACTION_UNITS[factionId] || {})[slot.class] || {})[slot.rarity] || {};
+    const STD = CONFIG.STAT_STANDARD;
+    const stdHp = STD.hpByClass[slot.class];
+    const stdDmg = (STD.damageByRarity[slot.rarity] || {})[slot.class];
+    if (stdHp == null) throw new Error(`STAT_STANDARD.hpByClass: missing ${slot.class}`);
+    if (stdDmg == null) throw new Error(`STAT_STANDARD.damageByRarity: missing ${slot.rarity}.${slot.class}`);
+    const apCost = ident.apCost != null ? ident.apCost : slot.apCost != null ? slot.apCost : STD.apCostByRarity[slot.rarity];
+    if (!(apCost >= 0)) throw new Error(`STAT_STANDARD.apCostByRarity: missing ${slot.rarity}`);
     const t = {
       id: ident.id || `${factionId}_${slot.rarity}_${slot.class}`,
       art: ident.art || ident.id || `${factionId}_${slot.rarity}_${slot.class}`,
@@ -316,12 +433,12 @@ for (const [factionId, faction] of Object.entries(CONFIG.FACTIONS)) {
       classId: slot.class,
       rarityId: slot.rarity,
       cls, rarity: rar,
-      hp: Math.round(cls.hp * rar.hpMult),
-      damage: Math.round(cls.damage * rar.damageMult),
+      hp: stdHp,          // STAT_STANDARD (same for every rarity)
+      damage: stdDmg,     // STAT_STANDARD
       speedGrids: cls.speedGrids,
       rangeGrids: cls.rangeGrids,
       cooldownSec: cls.cooldownSec,
-      cost: Math.round((cls.cost * rar.costMult) / 5) * 5,
+      cost: Math.round(apCost),   // AP (STAT_STANDARD.apCostByRarity or an apCost exception)
       armor: cls.armor || 0,
       blockGrids: cls.blockGrids || 0,
       ranged: !!cls.ranged,
@@ -330,8 +447,10 @@ for (const [factionId, faction] of Object.entries(CONFIG.FACTIONS)) {
       ability: ('ability' in ident ? ident.ability : slot.ability) || null,
       projectile: cls.ranged ? (ident.projectile || 'arrow') : null,
       bio: ident.bio || null,
+      flavor: ident.flavor || null,
       ccImmune: !!ident.ccImmune,   // future bosses: immune to stun / trap
       onHit: ident.onHit || null,   // e.g. { lifesteal: 1 }: statuses added by normal hits
+      hitFrame: ident.hitFrame | 0,   // attack-strip frame shown when the hit lands (art only)
       enemyWeight: rar.enemyWeight * (slot.enemyWeight || 1),
       color: cls.color,
       sizePx: Math.round({ striker: 22, defender: 28, ranger: 18 }[slot.class] * rar.sizeMult),
@@ -339,13 +458,30 @@ for (const [factionId, faction] of Object.entries(CONFIG.FACTIONS)) {
       factionColoredArt: !!faction.factionColoredArt,
       short: cls.tag[0],   // letter drawn on the placeholder square
     };
-    Object.assign(t, slot.overrides || {}, ident.overrides || {});
+    // Overrides may tune anything EXCEPT hp / damage / cost (the boss's standard is authoritative;
+    // a cost exception goes in `apCost` on the unit or slot, not in overrides).
+    for (const ov of [slot.overrides || {}, ident.overrides || {}]) {
+      for (const [k, v] of Object.entries(ov)) {
+        if (k === 'hp' || k === 'damage' || k === 'cost') {
+          if (typeof console !== 'undefined') console.warn(`[config] ${t.id}: ${k} override ignored (STAT_STANDARD${k === 'cost' ? '; use apCost' : ''})`);
+          continue;
+        }
+        t[k] = v;
+      }
+    }
     if (t.ability && !CONFIG.ABILITIES[t.ability]) throw new Error(`Unit ${t.id}: unknown ability ${t.ability}`);
     for (const st of Object.keys(t.onHit || {})) if (!CONFIG.STATUSES[st]) throw new Error(`Unit ${t.id}: unknown onHit status ${st}`);
     if (t.projectile && !CONFIG.PROJECTILES[t.projectile]) throw new Error(`Unit ${t.id}: unknown projectile ${t.projectile}`);
     CONFIG.UNIT_TYPES.push(t);
   }
 }
+// Boss rule guard: defender attack interval must stay above striker and ranger.
+(function checkDefenderInterval() {
+  const C = CONFIG.CLASSES, d = C.defender.cooldownSec;
+  if (!(d > C.striker.cooldownSec && d > C.ranger.cooldownSec)) {
+    console.warn(`[config] boss rule broken: defender attack interval (${d} s) must be above striker (${C.striker.cooldownSec} s) and ranger (${C.ranger.cooldownSec} s)`);
+  }
+})();
 CONFIG.rosterOf = (factionId) => CONFIG.UNIT_TYPES.filter((t) => t.factionId === factionId);
 // Backwards-compatible alias (older code / console snippets use CHARACTERS).
 CONFIG.CHARACTERS = CONFIG.UNIT_TYPES;

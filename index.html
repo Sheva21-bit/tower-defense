@@ -14,10 +14,11 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <!-- manifest.webmanifest is linked by game.js when served over http(s) (file:// rejects it) -->
   <title>Tower Defense — Prototype</title>
+  <link rel="stylesheet" href="menu.css">   <!-- main menu (Brian); optional: the game runs without it -->
   <style>
     body { margin: 0; background: #0e1220; color: #eee; font-family: sans-serif;
            display: flex; flex-direction: column; align-items: center; padding: 16px; }
-    h1 { font-size: 18px; margin: 0 0 8px; font-weight: 600; }
+    body > h1 { font-size: 18px; margin: 0 0 8px; font-weight: 600; }
     #wrap { position: relative; }
     canvas { display: block; border: 2px solid #333a55; border-radius: 4px; max-width: 100%; }
     #buttons { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; justify-content: center; }
@@ -74,7 +75,28 @@
     .rar-tag { font-size: 10px; font-weight: bold; color: var(--rar); border: 1px solid var(--rar); border-radius: 3px; padding: 0 4px; }
     .class-icon.sm { width: 24px; height: 24px; }
     .cost { margin-left: auto; font-weight: bold; color: #ffe082; }
-    .cost::before { content: '◆ '; font-size: 9px; }
+    .cost { display: inline-flex; align-items: center; gap: 2px; }
+    .cost-ap { width: 16px; height: 16px; flex: none; image-rendering: pixelated; }   /* Mia's AP crystal, 1x */
+    .ap-ic-txt { font: bold 10px/12px sans-serif; color: #7fd8ff; border: 1px solid #7fd8ff88; border-radius: 3px; padding: 0 2px; }
+    /* ---- AP HUD: counter + pip gauge (integer scale --ap-s; desktop 2x, phones 1x) ---- */
+    #ap-hud { --ap-s: 2; position: absolute; top: 6px; left: 10px; display: flex; flex-direction: column; gap: 3px;
+              pointer-events: none; color: #e8f4ff; font: bold 18px sans-serif; text-shadow: 0 1px 0 #000, 0 0 3px #000, 0 0 2px #000; }
+    #ap-hud .ap-count { display: flex; align-items: center; gap: 6px; line-height: 1; }
+    #ap-hud .ap-hud-ic { width: calc(16px * var(--ap-s)); height: calc(16px * var(--ap-s)); image-rendering: pixelated; }
+    #ap-hud .ap-max { color: #a9bddb; font-size: 0.78em; }
+    #ap-hud.full .ap-num { color: #ffe082; }
+    #ap-hud .ap-pips { display: flex; gap: calc(1px * var(--ap-s)); }
+    #ap-hud .ap-pip { position: relative; display: block; width: calc(10px * var(--ap-s)); height: calc(14px * var(--ap-s));
+                      background: var(--ap-pip) calc(-10px * var(--ap-s)) 0 / calc(20px * var(--ap-s)) calc(14px * var(--ap-s)) no-repeat;
+                      image-rendering: pixelated; }
+    #ap-hud .ap-fill { position: absolute; left: 0; bottom: 0; width: 100%; height: 0;
+                       background: var(--ap-pip) 0 100% / calc(20px * var(--ap-s)) calc(14px * var(--ap-s)) no-repeat; image-rendering: pixelated; }
+    #ap-hud .ap-pip.on .ap-fill { height: 100%; }
+    #ap-hud .ap-pip.next { animation: ap-pulse 1.1s ease-in-out infinite; }   /* subtle: the pip you're charging */
+    @keyframes ap-pulse { 50% { filter: brightness(1.45) drop-shadow(0 0 2px #7fd8ff); } }
+    #ap-hud.no-art .ap-pips { font-size: 13px; letter-spacing: 1px; color: #7fd8ff; }
+    .ip-ap-box { display: inline-flex; align-items: center; justify-content: center; }
+    .ip-ap-ic { width: 16px; height: 16px; image-rendering: pixelated; }
     .info small { font-size: 10px; }
     .info small.ab { color: var(--rar); }
     /* ---- enemy roster strip (read-only, hover for details) ---- */
@@ -83,32 +105,71 @@
     .er-head { color: #f99; margin-right: 4px; }
     .er-unit { display: flex; align-items: center; gap: 5px; padding: 2px 6px 2px 2px; border: 1px solid var(--rar);
                border-radius: 4px; background: #241c28; cursor: help; }
-    .er-unit img, .er-ph { width: 32px; height: 32px; flex: none; }
+    .er-pf > img, .er-ph { width: 32px; height: 32px; flex: none; display: block; }
     .er-ph { display: flex; align-items: center; justify-content: center; font: bold 14px sans-serif; color: #000a; }
     .er-unit span { display: flex; flex-direction: column; }
     .er-unit small { color: var(--rar); font-size: 10px; }
     /* ---- HUD controls over the canvas (Auto toggle, side swap) ---- */
-    #hud-ctl { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; }
+    #hud-ctl { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; white-space: nowrap; }
     #hud-ctl button, #swap-overlay { font: bold 12px sans-serif; padding: 5px 10px; border-radius: 5px; cursor: pointer;
                border: 2px solid #8a93b8; background: #1c2238e6; color: #dde; }
     #auto-btn { min-width: 92px; letter-spacing: 0.5px; }
     #auto-btn.on { border-color: #ffd54f; color: #1c1400; background: #ffd54fe6; box-shadow: 0 0 10px #ffd54f88; }
     #auto-btn:not(.on) { border-color: #9ecbff; }
-    #swap-overlay { margin-top: 10px; font-size: 14px; }
-    /* ability cooldown bar on spawn buttons (frontmost unit of that type) */
-    .pf .cdbar { position: absolute; left: 2px; right: 2px; bottom: 2px; height: 6px; background: #000c;
-                 border: 1px solid #0008; border-radius: 2px; overflow: hidden; pointer-events: auto; z-index: 2; }
+    #swap-overlay, #menu-overlay { margin-top: 10px; font-size: 14px; }
+    #menu-overlay { font: bold 14px sans-serif; padding: 5px 10px; border-radius: 5px; cursor: pointer; border: 2px solid #8a93b8; background: #1c2238e6; color: #dde; }
+    /* ability cooldown bar on spawn buttons (frontmost unit of that type); stops short of the class badge */
+    .pf .cdbar { position: absolute; left: 2px; right: 18px; bottom: 2px; height: 6px; background: #000c;
+                 border: 1px solid #0008; border-radius: 2px; overflow: hidden; pointer-events: auto; z-index: 2; box-sizing: border-box; }
     .pf .cdbar i { display: block; height: 100%; width: 0; background: #9ecbff; }
-    .pf .cdbar.ready i { background: #ffd54f; }
-    .pf .cdbar.manual { box-shadow: 0 0 6px #ffd54f; animation: cdpulse 0.8s ease-in-out infinite alternate; }
+    .pf .cdbar.ready i { background: #6fe6ff; }
+    .pf .cdbar.manual { box-shadow: 0 0 6px #6fe6ff; animation: cdpulse 0.8s ease-in-out infinite alternate; }
     @keyframes cdpulse { from { opacity: 0.65; } to { opacity: 1; } }
-    /* ★ badge on a spawn button: tap to cast the frontmost ready unit's ability (manual mode) */
-    .pf .castbtn { display: none; position: absolute; right: -7px; top: -7px; width: 26px; height: 26px; z-index: 3;
-                   border-radius: 50%; background: #ffd54f; color: #4e342e; font: bold 16px/26px sans-serif; text-align: center;
-                   box-shadow: 0 0 8px #ffd54f; cursor: pointer; animation: cdpulse 0.8s ease-in-out infinite alternate; }
-    .pf .castbtn::before { content: ''; position: absolute; inset: -9px; }   /* 44px tap area */
+    /* ✦ ability-ready spark (ui_ability_ready.png, 2x on desktop) in the TOP-RIGHT corner of a spawn button:
+       tap to cast the frontmost ready unit's ability (manual mode) */
+    .pf .castbtn { display: none; position: absolute; right: -7px; top: -7px; width: 28px; height: 28px; z-index: 4;
+                   cursor: pointer; animation: cdpulse 0.8s ease-in-out infinite alternate; }
+    .pf .castbtn .spark { display: block; width: 100%; height: 100%; filter: drop-shadow(0 0 3px #6fe6ff); }
+    .pf .castbtn .spark-ph { box-sizing: border-box; width: 60%; height: 60%; margin: 20%; border-radius: 50%;
+                   background: #6fe6ff; border: 2px solid #0b3a48; }
+    .pf .castbtn::before { content: ''; position: absolute; inset: -8px; }   /* 44px tap area */
     button.spawn.can-cast .castbtn { display: block; }
     button.spawn.can-cast .cdbar { cursor: pointer; }
+    /* rarity stars (TOP-LEFT, 1x) and class badge (BOTTOM-RIGHT, 1x, overhangs the portrait edge by 4px) */
+    .pf .pf-stars { position: absolute; left: 2px; top: 2px; z-index: 3; pointer-events: none; }
+    .stars-ph { font: bold 10px/11px sans-serif; letter-spacing: -1px; text-shadow: 0 0 2px #000, 0 0 2px #000; }
+    .pf .cls-badge, .er-pf .cls-badge { position: absolute; right: -4px; bottom: -4px; width: 20px; height: 20px; z-index: 3; pointer-events: none; }
+    .badge-ph { box-sizing: border-box; border-radius: 50%; border: 2px solid #18141e; color: #fff; text-align: center;
+                font: bold 11px/16px sans-serif; text-shadow: 0 1px 1px #000; }
+    /* commons cap counter (e.g. 2/3), TOP-RIGHT (capped units have no ability -> no spark there) */
+    .pf .capcount { position: absolute; right: 2px; top: 2px; z-index: 3; pointer-events: none; font: bold 10px/12px sans-serif;
+                    background: #000c; color: #e8eaf6; padding: 0 3px; border-radius: 3px; }
+    .pf .capcount.full { color: #ff8a80; box-shadow: 0 0 0 1px #ff8a80; }
+    button.spawn.has-ab .pf .capcount { top: 22px; }   /* (only if a capped rarity ever gets abilities) */
+    button.spawn.cap-flash { animation: capshake 0.35s ease-in-out; }
+    @keyframes capshake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+    /* ---- rarity rows (desktop): Common / SR / SSR, each Striker, Defender, Ranger ---- */
+    #buttons { flex-direction: column; align-items: center; gap: 8px; }
+    .rarity-row { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: 1000px; }
+    .rar-div { display: none; }
+    .rar-head { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--rar);
+                border-bottom: 1px solid #333a55; padding: 0 2px 3px; }
+    .rar-head b { letter-spacing: 0.5px; }
+    .rar-head small { color: #889; font-size: 10px; }
+    .rar-head .stars-ph { font-size: 18px; line-height: 22px; }
+    .row-units { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .row-units button.spawn.unit { width: 320px; flex: none; }
+    /* Mia's ui_spawn_frame.png as a 9-slice: slice 8 px drawn at 8 px (1x) -> trim + corner sparkles stay pixel-exact;
+       edges and fill are flat colour, so stretching them can't smear or tile. Rarity still reads from stars/headers/glow. */
+    #buttons.has-spawn-frame button.spawn.unit { border: 8px solid transparent; border-image: var(--spawn-frame) 8 fill / 8px stretch;
+               background: none; padding: 2px 4px 2px 4px; image-rendering: pixelated; border-radius: 0; }
+    #buttons.has-spawn-frame button.spawn.unit:hover:not(.disabled) { filter: brightness(1.18); background: none; }
+    #buttons.has-spawn-frame button.spawn.unit.rar-sr  { box-shadow: 0 0 0 1px #9ecbff66, 0 0 6px #9ecbff44; }
+    #buttons.has-spawn-frame button.spawn.unit.rar-ssr { box-shadow: 0 0 0 1px #ffd54f88, 0 0 10px #ffd54f66; }
+    .cls-name { font-size: 10px; color: #ccd; }
+    .er-group { display: flex; align-items: center; gap: 6px; padding: 2px 8px 2px 4px; border-left: 2px solid var(--rar); }
+    .er-ghead { display: flex; align-items: center; min-width: 31px; justify-content: center; }
+    .er-pf { position: relative; width: 32px; height: 32px; flex: none; margin-right: 4px; }
 
     /* ---- touch / mobile basics (all screen sizes) ---- */
     html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
@@ -118,19 +179,78 @@
     button { touch-action: manipulation; }
     .touch-only { display: none; }
     #hud-ctl button.on#debug-btn { border-color: #ffeb3b; color: #ffeb3b; }
+    #hud-ctl button.on#nums-btn { border-color: #ffffff; color: #ffffff; }
+    #hud-ctl button#nums-btn:not(.on) { color: #7d84a3; text-decoration: line-through; }
     @media (pointer: coarse) {
       #hud-ctl .touch-only { display: inline-block; }
       #hud-ctl .touch-only.hidden { display: none !important; }
-      #hud-ctl button, #swap-overlay, #restart { min-height: 44px; min-width: 44px; }
+      #hud-ctl button, #swap-overlay, #menu-overlay, #restart { min-height: 44px; min-width: 44px; }
       #hud-ctl .touch-only { font-size: 18px; padding: 0 8px; }
+      #hud-ctl #nums-btn { font-size: 13px; letter-spacing: -0.5px; }
+      #hud-ctl #menu-btn { font-size: 18px; padding: 0 8px; }
     }
     #rotate-hint { display: none; }
+    /* ---- unit info panel (shared: menu portraits + battlefield units). The game keeps running. ---- */
     #info-panel { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
-                  background: #0008; padding: 16px; box-sizing: border-box; }
-    #info-panel .ip-box { max-width: min(520px, 92vw); background: #1c2238f5; border: 2px solid #9ecbff; border-radius: 8px;
-                  padding: 12px 14px; font-size: 13px; line-height: 1.45; color: #eef; box-shadow: 0 6px 24px #000a; }
-    #info-panel .ip-text { white-space: pre-line; }
-    #info-panel small { display: block; margin-top: 8px; color: #889; }
+                  background: #0006; padding: 8px; box-sizing: border-box; }
+    #info-panel .ip-box { position: relative; width: min(560px, 96vw); max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px);
+                  overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box; -webkit-user-select: text; user-select: text;
+                  background: #161c30f7; border: 2px solid var(--rar, #9ecbff); border-radius: 8px; padding: 12px 14px 10px;
+                  font-size: 13px; line-height: 1.4; color: #eef; box-shadow: 0 6px 24px #000c, inset 0 0 18px #0006; }
+    .ip-close { position: sticky; float: right; top: 0; margin: -4px -6px 0 6px; width: 36px; height: 36px; z-index: 2;
+                border-radius: 6px; border: 1px solid #4a5580; background: #222a44; color: #dde; font-size: 16px; cursor: pointer; }
+    .ip-head { display: flex; gap: 12px; align-items: center; }
+    .ip-pf { position: relative; flex: none; width: 112px; height: 112px; border: 2px solid var(--rar); border-radius: 6px; overflow: hidden;
+             box-shadow: 0 0 10px #0008; }
+    .ip-pf .ip-portrait { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; image-rendering: auto; z-index: 1; }
+    .ip-pf-ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font: bold 40px sans-serif; color: #000a; }
+    .ip-headtxt { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+    .ip-name { font-size: 18px; line-height: 1.2; }
+    .ip-tags { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .ip-rar { font-weight: bold; font-size: 12px; }
+    .ip-cls { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #dde; }
+    .ip-cls .cls-badge { position: static; width: 20px; height: 20px; display: inline-block; }
+    .ip-fac { font-size: 12px; color: #aab; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+    .ip-live-tag { font: bold 10px sans-serif; padding: 1px 5px; border-radius: 3px; margin-left: 4px; }
+    .ip-live-tag.player { background: #3d7bd9; color: #fff; }
+    .ip-live-tag.enemy { background: #d9443d; color: #fff; }
+    .ip-flavor { margin: 8px 0 0; font-style: italic; color: #d7d0ff; }
+    .ip-bio { margin: 4px 0 0; color: #aab; font-size: 12px; }
+    .ip-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; margin-top: 10px; padding: 8px; background: #0e1322; border-radius: 6px; }
+    .ip-stat { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+    .ip-ic { width: 24px; height: 24px; flex: none; image-rendering: pixelated; }
+    .ip-ic-ph { display: inline-flex; align-items: center; justify-content: center; font: bold 15px sans-serif; color: #cfd8dc; }
+    .ip-cost-ic { color: #ffe082; font-size: 13px; }
+    .ip-lbl { color: #99a; font-size: 11px; min-width: 46px; }
+    .ip-val { font-weight: bold; }
+    .ip-val small, .ip-stat small, .ip-cd small, .ip-status small { color: #99a; font-weight: normal; font-size: 11px; }
+    .ip-hp.mid { color: #ffd54f; } .ip-hp.low { color: #ff6e6e; }
+    .ip-traits, .ip-ab-list { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: #cdd; }
+    .ip-ab { margin-top: 8px; padding: 8px; border: 1px solid #6fe6ff55; border-radius: 6px; background: #0f1a2a; }
+    .ip-ab.none { color: #99a; border-color: #333a55; background: none; }
+    .ip-ab-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .ip-ab-name { font-weight: bold; color: #6fe6ff; font-size: 14px; }
+    .ip-cd { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+    .ip-ab-desc { margin: 6px 0 0; color: #99a; font-size: 11px; }
+    .ip-ready { margin-top: 6px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #cfd8dc; }
+    .ip-ready.ok { color: #6fe6ff; font-weight: bold; }
+    .ip-ready .spark { width: 28px; height: 28px; image-rendering: pixelated; }
+    .ip-ready .spark-ph { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #6fe6ff; }
+    .ip-status { margin-top: 8px; font-size: 12px; }
+    .ip-status .s-ls { color: #ff6e6e; font-weight: bold; } .ip-status .s-buff { color: #ffd54f; font-weight: bold; }
+    .ip-status .s-cc { color: #b3e5fc; font-weight: bold; } .ip-status .bad { color: #ff6e6e; }
+    .ip-hint { display: block; margin-top: 8px; color: #778; font-size: 11px; }
+    @media (max-height: 540px), (max-width: 760px) {
+      #info-panel { padding: 4px; }
+      #info-panel .ip-box { width: min(620px, 98vw); max-height: calc(100dvh - 8px); padding: 8px 10px; font-size: 12px; }
+      .ip-pf { width: 72px; height: 72px; }
+      .ip-name { font-size: 15px; }
+      .ip-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px 8px; padding: 6px; margin-top: 6px; }
+      .ip-ic { width: 24px; height: 24px; }
+      .ip-lbl { min-width: 0; }
+      .ip-flavor { margin-top: 4px; }
+    }
+    @media (max-width: 480px) { .ip-stats { grid-template-columns: 1fr 1fr; } }
 
     /* ---- compact layout: phones (landscape height <= 540px, or narrow portrait) ----
        Battlefield scales to fit; spawn bar = one row of portrait buttons; everything fits one viewport. */
@@ -138,32 +258,48 @@
       :root { --strip-h: 70px; --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px); }
       body { padding: 0 var(--safe-r) 0 var(--safe-l); height: 100vh; height: 100dvh; overflow: hidden; box-sizing: border-box;
              justify-content: flex-start; }
-      h1, #help, #enemy-roster, .faction-head, .group-head { display: none !important; }
+      body > h1, #help, #enemy-roster, .faction-head, .group-head { display: none !important; }
       #wrap { width: fit-content; max-width: 100%; }
       canvas { border: 0; border-radius: 0; height: auto;
                width: min(calc(100vw - var(--safe-l) - var(--safe-r)), calc((100vh - var(--strip-h)) * 2.5));
                width: min(calc(100vw - var(--safe-l) - var(--safe-r)), calc((100dvh - var(--strip-h)) * 2.5)); }
       #hud-ctl { top: 4px; gap: 4px; }
-      #hud-ctl button { padding: 4px 8px; font-size: 12px; background: #1c2238cc; }
+      #ap-hud { --ap-s: 1; top: 4px; left: 6px; gap: 2px; font-size: 14px; }
+      button.spawn.unit .cost .cost-ap { margin: -2px 0 -2px -2px; }
+      #hud-ctl button { padding: 4px 8px; font-size: 12px; background: #1c2238cc; white-space: nowrap; }
+      #auto-btn { min-width: 0; }
       #hud-ctl .long { display: none; }
       #overlay-title { font-size: 30px; }
       #overlay-sub { margin: 4px 0 8px; }
-      #buttons { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; justify-content: flex-start; justify-content: safe center; gap: 6px;
+      #buttons { flex-direction: row; align-items: center; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; justify-content: flex-start; justify-content: safe center; gap: 6px;
                  margin: 4px 0 0; padding: 0 6px 4px; width: 100%; box-sizing: border-box; height: calc(var(--strip-h) - 4px);
                  scrollbar-width: none; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x; }
       #buttons::-webkit-scrollbar { display: none; }
-      .unit-group { display: contents; }
+      .unit-group, .rarity-row, .row-units { display: contents; }
+      .rar-head { display: none; }
+      .rar-div { display: block; flex: none; width: 2px; height: 46px; align-self: center; margin: 0 3px; border-radius: 1px;
+                 background: linear-gradient(#0000, #6a76a8, #0000); }
+      .row-units button.spawn.unit { width: 62px; }
+      /* phones: the 62px portrait buttons are almost entirely covered by the portrait + rarity frame, so the
+         spawn frame would only add a 1px sliver: keep the plain rarity-coloured border here (desktop only) */
+      #buttons.has-spawn-frame button.spawn.unit { border: 2px solid var(--rar); border-image: none; background: #1c2238; padding: 0; border-radius: 6px; }
+      #buttons.has-spawn-frame button.spawn.unit.rar-sr, #buttons.has-spawn-frame button.spawn.unit.rar-ssr { box-shadow: none; }
+      #buttons.has-spawn-frame button.spawn.unit.rar-ssr { box-shadow: 0 0 10px #ffd54f88, inset 0 0 8px #ffd54f33; }
       button.spawn.unit { width: 62px; height: 62px; flex: none; padding: 0; gap: 0; justify-content: center; position: relative; }
       button.spawn.unit .pf { width: 54px; height: 54px; }
       button.spawn.unit .pf .portrait { width: 54px; height: 54px; font-size: 22px; }
       button.spawn.unit .pf .rar-frame { left: -3px; top: -3px; width: 60px; height: 60px; }
-      button.spawn.unit .info, button.spawn.unit .btn-frame { position: absolute; left: 2px; bottom: 8px; width: auto; height: auto;
+      /* cost: bottom-left, just above the cooldown bar (abilities) / near the bottom (commons) */
+      button.spawn.unit .info, button.spawn.unit .btn-frame { position: absolute; left: 5px; bottom: 6px; width: auto; height: auto;
                  padding: 0; background: none !important; pointer-events: none; }
       button.spawn.unit .info > b, button.spawn.unit .info > small, button.spawn.unit .tags > :not(.cost) { display: none; }
       button.spawn.unit .cost { font-size: 11px; line-height: 13px; background: #000c; color: #ffe082; padding: 0 3px; border-radius: 3px; margin: 0; }
-      button.spawn.unit .cost::before { content: ''; }
-      .pf .castbtn { right: 1px; top: 1px; width: 28px; height: 28px; line-height: 28px; }
-      .pf .castbtn::before { inset: -4px; }
+      button.spawn.unit .cost { line-height: 12px; gap: 1px; }
+      button.spawn.unit.has-ab .info { bottom: 15px; }
+      .pf .castbtn { right: 1px; top: 1px; width: 14px; height: 14px; }   /* spark at 1x: clears the SSR stars */
+      .pf .castbtn::before { inset: -6px -6px -8px -8px; }
+      .pf .pf-stars { left: 1px; top: 1px; }
+      .pf .capcount { right: 1px; top: 1px; }
       .pf .cdbar { height: 7px; }
     }
     /* Portrait phone: still playable; controls move under the battlefield; polite rotate hint. */
@@ -183,11 +319,14 @@
   <h1>Tower Defense — Prototype</h1>
   <div id="wrap">
     <canvas id="stage"></canvas>
+    <div id="ap-hud" role="status" aria-label="Action points"></div>
     <div id="hud-ctl">
+      <button id="menu-btn" class="hidden" type="button" title="Main menu (pauses the game)" aria-label="Menu">☰<span class="long"> Menu</span></button>
       <button id="auto-btn" type="button">AUTO: OFF</button>
       <button id="swap-btn" type="button">⇄ Swap sides</button>
       <button id="restart-btn" class="touch-only" type="button" title="Restart (R)" aria-label="Restart">↻</button>
       <button id="debug-btn" class="touch-only" type="button" title="Debug grid (G)" aria-label="Debug grid">#</button>
+      <button id="nums-btn" class="touch-only" type="button" title="Damage numbers (N)" aria-label="Damage numbers" aria-pressed="true">123</button>
       <button id="fs-btn" class="touch-only hidden" type="button" title="Fullscreen" aria-label="Fullscreen">⛶</button>
     </div>
     <div id="overlay" class="hidden">
@@ -196,17 +335,22 @@
       <p id="overlay-sub"></p>
       <button id="restart">Restart</button>
       <button id="swap-overlay" type="button">⇄ Swap sides</button>
+      <button id="menu-overlay" class="hidden" type="button">☰ Main menu</button>
     </div>
   </div>
   <div id="buttons"></div>
-  <div id="info-panel" class="hidden" role="dialog" aria-label="Unit info"><div class="ip-box"><div class="ip-text"></div><small>Tap anywhere to close</small></div></div>
-  <div id="help">Keys: 1–9 spawn units (hover a button for its ability) &nbsp;·&nbsp; Abilities: click a glowing unit or Shift+1–9 &nbsp;·&nbsp;
-    A auto-cast on/off &nbsp;·&nbsp; F swap sides &nbsp;·&nbsp; R restart &nbsp;·&nbsp; G debug grid / ranges</div>
+  <div id="info-panel" class="hidden" role="dialog" aria-label="Unit info" aria-labelledby="ip-name"><div class="ip-box"></div></div>
+  <div id="help">Keys: 1–3 Common · 4–6 SR · 7–9 SSR (each Striker, Defender, Ranger; hover a button for its ability) &nbsp;·&nbsp;
+    <span id="help-ap">Action points (AP): start 3, +1 AP/s, max 10; Common 2 · SR 3 · SSR 5 AP</span> &nbsp;·&nbsp;
+    Max 3 Commons alive at once &nbsp;·&nbsp; Abilities: click a unit with the ✦ spark or Shift+1–9 &nbsp;·&nbsp;
+    A auto-cast on/off &nbsp;·&nbsp; N damage numbers on/off &nbsp;·&nbsp; F swap sides &nbsp;·&nbsp; R restart &nbsp;·&nbsp; G debug grid / ranges</div>
 
   <!-- Plain scripts, no build step: config, abilities, art manifest/loader, then game -->
   <script src="config.js"></script>
   <script src="abilities.js"></script>
   <script src="assets.js"></script>
   <script src="game.js"></script>
+  <!-- Main menu (Brian, see MENU.md). If this file is missing the game simply starts right away. -->
+  <script src="menu.js"></script>
 </body>
 </html>

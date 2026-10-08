@@ -22,40 +22,74 @@ outline instead of a true recolour. Per-team files (`*_blue.png` / `*_red.png`) 
 Serving over http also lets the game read the `assets/` folder listing, so it only requests
 files that exist (no "file not found" messages in the browser console).
 
-## Controls
-`1`–`9` spawn units (Strikers 1–3, Defenders 4–6, Rangers 7–9; Common / SR / SSR) · `R` restart ·
-`G` debug view (grid, each unit's position and range in grids, defender zones, ability cooldowns)
+## Main menu
+`menu.js` / `menu.css` (Brian, see `MENU.md`) show a title menu on load: Play (pick a side, Auto), How to Play, Settings.
+`?play=1` (or `?nomenu=1`) skips it; `?side=deva` and `?auto=1` still work as deep links (an unknown `?side`, e.g. `constructor` / `__proto__`, falls back to the default Valkyries vs Deva; ids are checked with `Object.hasOwn(CONFIG.FACTIONS, id)`). The **☰ Menu** button (also on the
+victory/defeat screen) pauses the match and opens the menu (Resume / New battle; Esc resumes). Without `menu.js` the game
+starts right away as before. `game.js` exposes `Game.start({ side, enemy, auto, stage })`, `Game.pause()`,
+`Game.resume()`, `Game.started` (true once a match has begun), `Game.running`, `Game.paused`.
 
-Abilities are **manual by default**: click a unit with a glowing star (or `Shift`+`1`–`9` = frontmost ready unit of
+## Controls
+`1`–`9` spawn units, grouped by rarity: **Common 1–3, SR 4–6, SSR 7–9** (each Striker, Defender, Ranger) · `R` restart ·
+`G` debug view (grid, each unit's position and range in grids, defender zones, ability cooldowns) · `N` damage numbers on/off
+
+**Action points (AP)** (`CONFIG.AP`, same for you and the enemy AI): start with **3 AP**, gain **+1 AP/s**, max **10**. Units cost
+**Common 2 · SR 3 · SSR 5 AP**. The top-left HUD shows `AP / 10` with Mia's crystal and a 10-pip gauge (the next pip fills as it charges);
+buttons you can't afford grey out.
+**Max 3 Commons alive per side** (`RARITIES.common.maxAlive`): blocked spawns cost nothing; the enemy AI obeys it too.
+**Unit info:** right-click (or press and hold) a spawn portrait or any unit on the field; tapping a unit whose ability isn't
+ready, or an enemy, also opens it. **Damage numbers** float over units when hits land (white = hit, red = Life Steal tick,
+green = heal); toggle with `N` / the **123** button (saved in localStorage `td.showDamageNumbers`, shared with the menu).
+
+Abilities are **manual by default**: click a unit showing the cyan spark (or `Shift`+`1`–`9` = frontmost ready unit of
 that slot). `A` / the **AUTO** button toggles auto-casting for your units (the enemy AI always auto-casts).
 `F` / the **⇄ Play as …** button swaps sides (also `?side=deva` in the URL). Details in `UNITS.md`.
 
 ## Phones / tablets
 The page is mobile-ready (it still has to be **served over http(s)**: see hosting).
 - **Landscape** is best. The battlefield scales to the screen (internal 1000x400, pixel-crisp) with a
-  one-row strip of 9 portrait buttons (cost + ability cooldown bar) under it, and nothing scrolls. In
+  one-row strip of 9 portrait buttons (AP cost + ability cooldown bar) under it, and nothing scrolls. In
   **portrait** a polite "rotate your phone" hint shows, and it's still playable (the strip scrolls sideways).
-- **Tap** a button = spawn. **Tap and hold** = unit info. **★** on a button (or tapping its cooldown bar) = use the
-  ability of the frontmost ready unit of that slot. **Tap a glowing unit** on the battlefield = use its ability.
-- On-screen buttons replace the keyboard: **AUTO**, **⇄ swap sides**, **↻ restart**, **# debug grid**, **⛶ fullscreen**
+- **Tap** a button = spawn. **Tap and hold** = unit info. The **cyan spark** on a button (or tapping its cooldown bar) = use the
+  ability of the frontmost ready unit of that slot. **Tap a sparkling unit** on the battlefield = use its ability; tap any other
+  unit (or hold any unit) = its live info panel.
+- The strip is ordered Common | SR | SSR with thin dividers. Each portrait: stars top-left, class badge bottom-right, AP cost
+  bottom-left, spark (ability ready) or `n/3` Commons counter top-right.
+- On-screen buttons replace the keyboard: **☰ menu**, **AUTO**, **⇄ swap sides**, **↻ restart**, **# debug grid**, **123 damage numbers**, **⛶ fullscreen**
   (Android/desktop; iPhone Safari has no page fullscreen, so use Add to Home Screen instead).
 - **Add to Home Screen** launches fullscreen (web app manifest `manifest.webmanifest`, icons in `icons/`,
   Apple `apple-mobile-web-app-*` tags). The manifest is only linked when served over http(s).
+
+## Stat standard (boss)
+All HP, damage and AP cost come from **`CONFIG.STAT_STANDARD`** in `config.js` (the unit builder reads it; there are no
+rarity multipliers and no per-unit HP/damage/cost overrides):
+- **HP** (same at every rarity): Striker **100**, Defender **150**, Ranger **75**.
+- **Damage per hit:** all Rangers **10**; Common Striker **5**, SR / SSR Strikers **10**; Common Defender **15**, SR / SSR
+  Defenders **20** (boss update: Rangers were 15, Defenders +10).
+- **AP cost** (`apCostByRarity`): Common **2**, SR **3**, SSR **5**; an optional `apCost` on a unit or slot is the hook for
+  future "this unit costs more" exceptions. AP rules: `CONFIG.AP = { start: 3, perSec: 1, max: 10 }`.
+- **Attack interval** (class, `CONFIG.CLASSES`): Striker **1.0 s**, Ranger **1.4 s**, Defender **1.6 s**. Boss rule:
+  defenders always attack least often (their interval must stay above the striker's and ranger's; `config.js` warns at load).
+- Ability damage scales from damage per hit. Life Steal (1 HP/s per stack for 5 s) is the only flat damage number.
+- Combat ticks are two-phase (move, then act, with damage applied at the end of the tick), so spawn order doesn't decide
+  even fights. Details in `UNITS.md`.
 
 ## Units
 Factions (Valkyries = player, Deva = enemy by default; High Elves / Dark Elves also defined) x three classes (Striker, Defender, Ranger) x three
 rarities (Common, SR, SSR). See `UNITS.md` for the full table, and `config.js` (`FACTIONS`,
 `CLASSES`, `RARITIES`, `ROSTER_SLOTS`, `FACTION_UNITS`, `ABILITIES`) to edit.
-Ability logic lives in `abilities.js`.
+Ability logic lives in `abilities.js`. Named characters with their own art and kits: Dia, Grey (Shield Bash charge +
+knockback), Hera (Valkyries); Raven, Brawn (Endure), Pela (Deva).
 
 ## Files
 | File | What |
 |---|---|
-| `config.js` | All gameplay numbers (grid, towers, economy, unit stats) |
+| `config.js` | All gameplay numbers (grid, towers, AP economy, `STAT_STANDARD`, unit stats) |
 | `abilities.js` | Ability logic (one handler per ability id) |
 | `UNITS.md` | Unit stats/abilities table |
 | `assets.js` | Art manifest (every file from `ASSETS.md`, frame sizes, frame counts, fps) + async loader |
-| `game.js` | Game logic and drawing |
+| `game.js` | Game logic and drawing (+ `Game` API for the menu, `TD` test hooks) |
+| `menu.js`, `menu.css`, `menu-preview.html`, `MENU.md` | Main menu (Brian) |
 | `ASSETS.md` | Asset spec for the artist |
 | `assets/` | Drop art here. Empty = placeholder shapes. |
 
@@ -74,6 +108,7 @@ Ability logic lives in `abilities.js`.
 - Towers: 96x192, base on the ground line, centred on the tower's 6-grid (60 px) footprint.
   `*_damaged.png` shows below 50% HP, `tower_destroyed.png` at 0 HP.
 - Background: `bg_stage1.png` fills the canvas; optional `bg_stage1_far.png` is drawn behind it.
-- UI: portraits, rarity frames, class icons, button frame, resource icon, HP bar frames, victory/defeat banners and the
+- UI: portraits, rarity frames, class icons, spawn-button frame (`ui_spawn_frame.png`: 9-slice border on desktop
+  buttons, 8 px slice at 1x; phones keep the plain border), AP icon (`ui_ap_icon.png`) and AP pips (`ui_ap_pip.png`), HP bar frames, victory/defeat banners and the
   restart button replace the built-in UI when present.
 - Tune sizes / frame counts / fps in `assets.js` (`ASSET_MANIFEST`).

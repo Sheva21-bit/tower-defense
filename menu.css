@@ -1,0 +1,106 @@
+/* menu.css: main menu overlay (pairs with menu.js). Everything is scoped under #td-menu / .tdm-*. */
+#td-menu { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;
+  background: #0e1220; color: #eee; font-family: sans-serif; overflow: hidden;
+  padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0); }
+#td-menu[hidden] { display: none; }
+html.tdm-open, html.tdm-open body { overflow: hidden; }
+
+/* Backdrop: stage background dimmed, Dia and Raven facing off */
+.tdm-art { position: absolute; inset: 0; pointer-events: none; }
+.tdm-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated;
+  filter: brightness(0.35) saturate(0.8); }
+.tdm-hero { position: absolute; bottom: 0; height: min(78vh, 520px); width: auto; image-rendering: auto;
+  filter: drop-shadow(0 0 18px #000a); opacity: 0.9; }
+.tdm-hero.left { left: max(0px, calc(50% - 640px)); }
+.tdm-hero.right { right: max(0px, calc(50% - 640px)); transform: scaleX(-1); }
+
+/* Centre panel */
+.tdm-panel { position: relative; width: min(460px, 92vw); max-height: calc(100dvh - 24px); display: flex;
+  background: #141a2fe6; border: 2px solid #4a5580; border-radius: 10px; box-shadow: 0 10px 40px #000c; }
+.tdm-screen { display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 22px 24px; width: 100%;
+  box-sizing: border-box; min-height: 0; }
+.tdm-screen h2 { margin: 0; font-size: 22px; text-align: center; }
+.tdm-title { align-items: center; text-align: center; }
+.tdm-logo { margin: 0; font-size: 40px; letter-spacing: 1px; line-height: 1.1; color: #fff;
+  text-shadow: 0 2px 0 #3d7bd9, 0 0 18px #ff4fa366; }
+.tdm-logo small { display: block; font-size: 13px; letter-spacing: 4px; text-transform: uppercase; color: #aab; text-shadow: none; margin-top: 4px; }
+.tdm-tagline { margin: 0 0 6px; color: #ccd; font-style: italic; }
+.tdm-col { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.tdm-row { display: flex; gap: 10px; align-items: center; }
+.tdm-actions { justify-content: space-between; margin-top: 4px; }
+.tdm-actions .tdm-btn { flex: 1; }
+
+/* Buttons (44px min touch target) */
+.tdm-btn { min-height: 44px; padding: 10px 18px; font-size: 16px; color: #eee; background: #222a44; border: 1px solid #4a5580;
+  border-radius: 8px; cursor: pointer; touch-action: manipulation; }
+.tdm-btn:hover { background: #2d3760; }
+.tdm-btn:focus-visible, .tdm-card:focus-visible, .tdm-toggle input:focus-visible + .tdm-switch { outline: 3px solid #ffe082; outline-offset: 2px; }
+.tdm-btn.primary { background: #3d7bd9; border-color: #6fa0ff; font-weight: bold; }
+.tdm-btn.primary:hover { background: #4a8af0; }
+.tdm-btn.danger { background: none; border-color: #7a3a3a; color: #ff9a9a; }
+.tdm-btn.danger:hover { background: #3a1c1c; }
+
+/* Faction cards */
+.tdm-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+.tdm-card { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 4px; cursor: pointer; color: #eee;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--f1) 30%, #141a2f), #141a2f); border: 2px solid #333a55; border-radius: 8px; }
+.tdm-card:hover { border-color: #6a76a8; }
+.tdm-card.selected { border-color: #ffe082; box-shadow: 0 0 0 1px #ffe082, 0 0 14px #ffe08255; }
+.tdm-face { width: 72px; height: 72px; border-radius: 6px; object-fit: cover; background: #0e1322; }
+.tdm-face.ph { display: flex; align-items: center; justify-content: center; font: bold 30px sans-serif; color: #fff; }
+.tdm-fname { font-size: 13px; font-weight: bold; }
+.tdm-vs { margin: 0; text-align: center; color: #ccd; font-size: 14px; white-space: pre; }
+
+/* Toggles */
+.tdm-toggle { display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 6px 0; }
+.tdm-toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.tdm-switch { flex: none; position: relative; width: 44px; height: 24px; border-radius: 12px; background: #333a55; transition: background .15s; }
+.tdm-switch::after { content: ''; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: #ccd; transition: transform .15s; }
+.tdm-toggle input:checked + .tdm-switch { background: #3d7bd9; }
+.tdm-toggle input:checked + .tdm-switch::after { transform: translateX(20px); background: #fff; }
+.tdm-tlabel { display: flex; flex-direction: column; font-size: 15px; }
+.tdm-tlabel small { color: #99a; font-size: 12px; margin-top: 2px; }
+.tdm-toggle.disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* How to Play */
+.tdm-scroll { overflow-y: auto; min-height: 0; flex: 1; padding-right: 6px; }
+.tdm-scroll section { margin-bottom: 10px; }
+.tdm-scroll h3 { margin: 0 0 2px; font-size: 14px; color: #ffe082; }
+.tdm-scroll p { margin: 0; font-size: 13px; color: #ccd; line-height: 1.4; }
+.tdm-howto { max-height: calc(100dvh - 24px); }
+
+#td-menu select { min-height: 36px; background: #222a44; color: #eee; border: 1px solid #4a5580; border-radius: 6px; }
+
+/* Phones: landscape (short) and narrow portrait */
+@media (max-height: 540px) {
+  .tdm-panel { width: min(560px, 70vw); }
+  .tdm-screen { padding: 12px 16px; gap: 8px; }
+  .tdm-logo { font-size: 28px; }
+  .tdm-tagline { display: none; }
+  .tdm-col { flex-direction: row; flex-wrap: wrap; }
+  .tdm-col .tdm-btn { flex: 1 1 30%; }
+  .tdm-face { width: 48px; height: 48px; }
+  .tdm-cards { grid-template-columns: repeat(2, 1fr); }
+  .tdm-hero { height: 92vh; }
+  .tdm-hero.left { left: -40px; } .tdm-hero.right { right: -40px; }
+  .tdm-toggle { padding: 2px 0; }
+}
+@media (max-width: 600px) and (orientation: portrait) {
+  .tdm-hero { height: 40vh; opacity: 0.6; }
+  .tdm-cards { grid-template-columns: repeat(2, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { .tdm-switch, .tdm-switch::after { transition: none; } }
+
+/* Mia's pixel frames (9-slice). Missing files just leave the plain CSS look underneath. */
+.tdm-panel { border: 24px solid transparent; border-image: url(assets/ui_panel.png) 24 fill / 24px stretch;
+  image-rendering: pixelated; background: none; box-shadow: none; filter: drop-shadow(0 10px 30px #000c); border-radius: 0; }
+.tdm-screen { padding: 4px 6px; }
+.tdm-btn { border: 12px solid transparent; border-image: url(assets/ui_button.png) 12 fill / 12px stretch;
+  image-rendering: pixelated; background: none; border-radius: 0; padding: 0 10px; }
+.tdm-btn:hover { background: none; border-image-source: url(assets/ui_button_hover.png); }
+.tdm-btn:active { border-image-source: url(assets/ui_button_pressed.png); }
+.tdm-btn.primary { background: none; color: #fff; text-shadow: 0 1px 0 #000; border-image-source: url(assets/ui_button_primary.png); }
+.tdm-btn.primary:hover { background: none; border-image-source: url(assets/ui_button_primary_hover.png); }
+.tdm-btn.primary:active { border-image-source: url(assets/ui_button_primary_pressed.png); }
+.tdm-btn.danger { background: none; }
+@media (max-height: 540px) { .tdm-panel { border-width: 24px; } .tdm-screen { padding: 2px 4px; } }

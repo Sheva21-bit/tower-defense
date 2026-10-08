@@ -22,6 +22,10 @@
  *   api.launch({ fromX, toX, speedGrids, style, depth, source, onArrive })
  *                               fly a projectile to a grid position, then call onArrive()
  *   api.later(sec, fn)          run fn after `sec` seconds of game time
+ *   api.shoot(u, target, mult)  fire u's normal ranged attack (standard projectile, onHit) at a unit, mult x damage
+ *   api.canAct(u)               alive and not stunned / trapped / hopping
+ *   api.doomed(t)               projectiles already in flight at t will kill it
+ *   api.burst(u, sec)           block u's normal attack for `sec` (multi-shot abilities)
  *   api.addStatus(target, id, stacks, source)   add stacking status (CONFIG.STATUSES, e.g. 'lifesteal')
  *   api.buffSpeed(target, mult, sec)  movement-speed buff (no stacking; re-apply refreshes)
  *   api.hop(u, dxGrids, sec)    quick scripted move (never behind own tower front / through enemies)
@@ -188,6 +192,56 @@ const ABILITY_IMPL = {
         },
       });
     },
+  },
+
+  // ---- Hera (Valkyrie SR Ranger): two quick arrows, an extra burst on top of her attack rhythm ----
+  // offCycle (config): castable whether or not her normal attack is ready; her attack timer is NOT reset;
+  // api.burst blocks a normal attack from starting until the last arrow has left.
+  nimble_shot: {
+    canUse(u, A, api) { return !!api.currentTarget(u); },   // an enemy within her attack range
+    use(u, A, api) {
+      const first = api.currentTarget(u);
+      const n = Math.max(1, A.arrows || 2);
+      api.burst(u, A.gapSec * (n - 1) + 1e-6);
+      api.fx({ kind: 'nimble', src: u, x: u.x, depth: u.depth, dur: A.fxSec || 0.3 });
+      api.shoot(u, first, A.damageMult);
+      for (let i = 1; i < n; i++) {
+        api.later(A.gapSec * i, () => {
+          if (!api.canAct(u)) return;                       // died / stunned / trapped mid-burst: rest skipped
+          // Same target while it lives; if it fell (or arrows already in flight will finish it), the next
+          // valid target in range; else skipped.
+          let t = first.hp > 0 && !api.doomed(first) ? first : null;
+          if (!t) t = api.foes(u).filter((o) => o !== first && !api.doomed(o) && api.dist(u, o) <= u.type.rangeGrids)
+            .sort((a, b) => api.dist(u, a) - api.dist(u, b))[0] || null;
+          if (t) api.shoot(u, t, A.damageMult);
+        });
+      }
+    },
+  },
+
+  // ---- Grey (Valkyrie SR Defender): shield charge that shoves everyone he runs into ----
+  // (A different ability from the generic shield_bash above.) The engine resolves the charge each tick
+  // (api.charge): bumped enemies are hit once per charge, knocked back smoothly (clamped at their own
+  // tower; ccImmune units aren't moved) and their attack wind-up restarts. Towers are unaffected.
+  grey_shield_bash: {
+    canUse(u, A, api) {           // an enemy within triggerGrids IN FRONT of him
+      return api.foes(u).some((o) => { const a = api.ahead(u, o); return a >= -0.5 && a <= A.triggerGrids; });
+    },
+    use(u, A, api) {
+      api.charge(u, {
+        left: A.chargeGrids, speed: A.chargeSpeedGrids,
+        knockGrids: A.knockbackGrids, knockSec: A.knockbackSec,
+        damage: u.type.damage * (A.damagePct || 0) / 100,
+        interrupt: A.interruptsAttack !== false,
+      });
+    },
+  },
+
+  // ---- Brawn (Deva SR Defender): Endure. Plants his shield; the engine does the rest (api.endure): no walking,
+  // keeps attacking, damage reduction, and direct attackers are knocked back (Grey's knockback code). ----
+  endure: {
+    canUse(u, A, api) { return api.foes(u).some((o) => api.dist(u, o) <= u.type.rangeGrids); },   // an enemy within his range
+    use(u, A, api) { api.endure(u, A); },
   },
 
   // ---- Ranger SSR: AoE on the most crowded spot within range ----

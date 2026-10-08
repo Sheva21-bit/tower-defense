@@ -30,6 +30,7 @@ const ASSET_MANIFEST = {
     attack:  { frames: 4, fps: 'cooldown', loop: true  },
     death:   { frames: 4, fps: 8,          loop: false },  // plays once, then the body is removed
     ability: { frames: 6, fps: 12,         loop: false },  // optional (SR/SSR): plays once on ability use
+    endure:  { frames: 4, fps: 8,          loop: false, onlyAbility: 'endure' },  // Brawn's Endure: 0 lift, 1 slam, 2-3 braced loop
   },
   TEAM_SUFFIX: { player: 'blue', enemy: 'red' },
   RECOLOR_KEY: [255, 0, 255],   // pure magenta
@@ -69,6 +70,14 @@ const ASSET_MANIFEST = {
     fx_lifesteal_mark:  { file: 'fx_lifesteal_mark.png',  w: 9,  h: 11, fps: 1  },  // blood drop above units with Life Steal stacks
     fx_rally:           { file: 'fx_rally.png',           w: 64, h: 64, fps: 10 },  // Dia's Rallying Charge: 0-2 gather, 3-5 ring burst
     fx_rally_buff:      { file: 'fx_rally_buff.png',      w: 9,  h: 9,  fps: 1  },  // gold double chevron on speed-buffed units
+    fx_nimble_shot:     { file: 'fx_nimble_shot.png',     w: 40, h: 16, fps: 12 },  // Hera's Nimble Shot: 2 arrows leaving the bow (4 frames, 1x)
+    fx_endure_slam:     { file: 'fx_endure_slam.png',     w: 48, h: 24, fps: 12 },  // Brawn's Endure: dust at the shield base, once on the slam (4 frames)
+    fx_endure_guard:    { file: 'fx_endure_guard.png',    w: 32, h: 64, fps: 8 },   // Brawn's Endure: gold glint up the shield face, loops while active (4 frames)
+    fx_endure_knock:    { file: 'fx_endure_knock.png',    w: 32, h: 32, fps: 12 },  // Brawn's Endure: push ring on each attacker knocked back (4 frames, pushes right)
+    fx_arrow:           { file: 'fx_arrow.png',           w: 16, h: 5 },   // arrow projectile, points right, tip at the right edge (1 frame)
+    fx_arrow_trail:     { file: 'fx_arrow_trail.png',     w: 24, h: 5 },   // white streak fading to the left; tinted per team at runtime
+    fx_shield_bash_dash:   { file: 'fx_shield_bash_dash.png',   w: 48, h: 32, fps: 12 },  // Grey's Shield Bash: speed lines + dust behind him while charging (3-frame loop, 1x)
+    fx_shield_bash_impact: { file: 'fx_shield_bash_impact.png', w: 48, h: 48, fps: 12 },  // Grey's Shield Bash: gold burst + shockwave on each shoved enemy (4 frames, 1x)
   },
 
   // ---- UI ----
@@ -77,11 +86,32 @@ const ASSET_MANIFEST = {
     class_striker:    { file: 'ui_class_striker.png',    w: 24,  h: 24 },  // class icons
     class_defender:   { file: 'ui_class_defender.png',   w: 24,  h: 24 },
     class_ranger:     { file: 'ui_class_ranger.png',     w: 24,  h: 24 },
+    badge_striker:    { file: 'ui_badge_striker.png',    w: 20,  h: 20 },  // class badge, bottom-right corner of
+    badge_defender:   { file: 'ui_badge_defender.png',   w: 20,  h: 20 },  // every portrait button (1x, overhangs
+    badge_ranger:     { file: 'ui_badge_ranger.png',     w: 20,  h: 20 },  // the portrait edge by 4px)
+    stars_common:     { file: 'ui_stars_common.png',     w: 11,  h: 11 },  // rarity stars: top-left of portrait
+    stars_sr:         { file: 'ui_stars_sr.png',         w: 21,  h: 11 },  // buttons (1x) + rarity row headers (2x)
+    stars_ssr:        { file: 'ui_stars_ssr.png',        w: 31,  h: 11 },
+    ability_ready:    { file: 'ui_ability_ready.png',    w: 14,  h: 14 },  // ability-ready spark: button corner + over castable units
+    // Unit info panel stat icons (12x12, drawn at 2x)
+    stat_hp:          { file: 'ui_stat_hp.png',          w: 12,  h: 12 },  // heart
+    stat_damage:      { file: 'ui_stat_damage.png',      w: 12,  h: 12 },  // sword
+    stat_atkspeed:    { file: 'ui_stat_atkspeed.png',    w: 12,  h: 12 },  // bolt
+    stat_movespeed:   { file: 'ui_stat_movespeed.png',   w: 12,  h: 12 },  // boot
+    stat_range:       { file: 'ui_stat_range.png',       w: 12,  h: 12 },  // target
+    stat_cooldown:    { file: 'ui_stat_cooldown.png',    w: 12,  h: 12 },  // hourglass
+    // Damage-number digit sheets: 12 glyphs (0-9, +, -) in 6x9 cells, drawn 5 px apart (1 px overlap).
+    digits_white:     { file: 'ui_digits_white.png',     w: 72,  h: 9, cellW: 6, advance: 5 },  // direct hits (2x)
+    digits_red:       { file: 'ui_digits_red.png',       w: 72,  h: 9, cellW: 6, advance: 5 },  // life steal ticks (1x)
+    digits_green:     { file: 'ui_digits_green.png',     w: 72,  h: 9, cellW: 6, advance: 5 },  // heals, '+' prefix (1x)
     frame_common:     { file: 'ui_frame_common.png',     w: 72,  h: 72 },  // rarity portrait frames,
     frame_sr:         { file: 'ui_frame_sr.png',         w: 72,  h: 72 },  // drawn at portrait (x-4, y-4)
     frame_ssr:        { file: 'ui_frame_ssr.png',        w: 72,  h: 72 },
-    button:           { file: 'ui_button.png',           w: 256, h: 64 },  // text drawn on top
-    resourceIcon:     { file: 'ui_resource_icon.png',    w: 24,  h: 24 },
+    button:           { file: 'ui_spawn_frame.png',      w: 256, h: 64 },  // desktop spawn-button 9-slice frame (slice 8 @1x).
+                                                                           // NOT ui_button.png: that name is Mia's 48x48 9-slice for the menu
+    resourceIcon:     { file: 'ui_resource_icon.png',    w: 24,  h: 24 },  // old gold economy: unused since AP
+    apIcon:           { file: 'ui_ap_icon.png',          w: 16,  h: 16 },  // AP crystal: HUD counter, cost labels, info panel
+    apPip:            { file: 'ui_ap_pip.png',           w: 20,  h: 14, cellW: 10 },  // strip: filled x0-9, empty x10-19
     hpbarFrame:       { file: 'ui_hpbar_frame.png',      w: 64,  h: 8 },   // fill drawn in code
     towerHpbarFrame:  { file: 'ui_tower_hpbar_frame.png', w: 200, h: 16 },
     victory:          { file: 'ui_victory.png',          w: 480, h: 120 },
@@ -91,6 +121,9 @@ const ASSET_MANIFEST = {
 };
 
 ASSET_MANIFEST.SPRITE_SIZE_BY_RARITY = { common: 48, sr: 64, ssr: 80 };
+// Large portraits for the unit info panel header (512x512). Loaded lazily by the panel only
+// (never preloaded: they're big). Missing -> falls back to ui_portrait_<art>.png.
+ASSET_MANIFEST.LARGE_PORTRAIT = (art) => `${ASSET_MANIFEST.basePath}portraits/${art}.png`;
 
 // Fill per-unit entries from the roster in config.js (so new units get art hooks automatically).
 for (const t of CONFIG.UNIT_TYPES) {
@@ -301,6 +334,8 @@ const ART = (function () {
     for (const anim of anims) {
       if (anim !== 'walk' && !out.player.walk && !out.enemy.walk) { out.player[anim] = out.enemy[anim] = null; continue; }
       if (anim === 'ability' && !(unitType && unitType.ability)) { out.player[anim] = out.enemy[anim] = null; continue; }
+      const only = M.CHARACTER_ANIMS[anim].onlyAbility;   // ability-specific strip: only requested for units with that ability
+      if (only && !(unitType && unitType.ability === only)) { out.player[anim] = out.enemy[anim] = null; continue; }
       const animDef = M.CHARACTER_ANIMS[anim];
       const base = await loadImage(`${def.prefix}_${anim}.png`);
       for (const team of ['player', 'enemy']) {
