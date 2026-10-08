@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- Mobile: no zoom (double-tap zoom is also off via touch-action), notch-aware, home-screen app -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0e1220">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Tower Defense">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="icon" type="image/png" href="icons/favicon-32.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <!-- manifest.webmanifest is linked by game.js when served over http(s) (file:// rejects it) -->
+  <title>Tower Defense — Prototype</title>
+  <style>
+    body { margin: 0; background: #0e1220; color: #eee; font-family: sans-serif;
+           display: flex; flex-direction: column; align-items: center; padding: 16px; }
+    h1 { font-size: 18px; margin: 0 0 8px; font-weight: 600; }
+    #wrap { position: relative; }
+    canvas { display: block; border: 2px solid #333a55; border-radius: 4px; max-width: 100%; }
+    #buttons { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; justify-content: center; }
+    button.spawn { background: #222a44; color: #eee; border: 1px solid #4a5580; border-radius: 6px;
+                   padding: 8px 12px; cursor: pointer; text-align: left; font-size: 13px; }
+    button.spawn:hover:not(:disabled):not(.disabled) { background: #2d3760; }
+    button.spawn:disabled, button.spawn.disabled { opacity: 0.45; cursor: not-allowed; }
+    .swatch { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; }
+    small { color: #aab; }
+    #help { margin-top: 10px; font-size: 12px; color: #889; }
+    #overlay { position: absolute; inset: 0; background: #000b; display: flex; flex-direction: column;
+               align-items: center; justify-content: center; }
+    #overlay.hidden { display: none; }
+    #overlay-title { font-size: 48px; font-weight: bold; margin: 0; }
+    #overlay-sub { margin: 8px 0 18px; color: #ccc; }
+    #restart { font-size: 18px; padding: 10px 24px; border-radius: 6px; border: none;
+               background: #3d7bd9; color: white; cursor: pointer; }
+    /* ---- art-backed UI (only used when the matching image exists in assets/) ---- */
+    canvas, img { image-rendering: pixelated; image-rendering: crisp-edges; }
+    .hidden { display: none !important; }
+    #overlay-banner { width: 480px; height: 120px; max-width: 90%; }
+    #restart.has-art { padding: 0; background: none; line-height: 0; }
+    button.spawn.has-art { display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 4px; }
+    button.spawn.has-art .portrait { width: 64px; height: 64px; flex: none; }
+    button.spawn.has-art .btn-frame { display: flex; flex-direction: column; justify-content: center;
+               width: 256px; height: 64px; box-sizing: border-box; padding: 0 14px; flex: none;
+               background-size: 100% 100%; background-repeat: no-repeat; text-shadow: 0 1px 2px #000; }
+    button.spawn.has-art .btn-frame small { font-size: 10px; color: #dde; }
+    button.spawn.has-art:has(.btn-frame) { background: none; border: none; }
+    /* ---- spawn bar: 9 units grouped by class ---- */
+    .faction-head { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; }
+    .faction-head small { color: #889; font-size: 11px; }
+    .fac-swatches i { display: inline-block; width: 10px; height: 10px; margin-right: 2px; border-radius: 2px; }
+    #buttons { align-items: flex-start; gap: 12px; }
+    .unit-group { display: flex; flex-direction: column; gap: 6px; width: 320px; }
+    .group-head { display: flex; align-items: center; gap: 6px; font-size: 13px; min-height: 26px; }
+    .group-head small { color: #889; font-size: 10px; line-height: 1.2; }
+    .class-icon { width: 24px; height: 24px; flex: none; }
+    .class-tag { font-size: 9px; font-weight: bold; color: #111; padding: 2px 4px; border-radius: 3px; flex: none; }
+    button.spawn.unit { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 10px; width: 100%;
+               border: 2px solid var(--rar); background: #1c2238; }
+    button.spawn.unit.rar-ssr { box-shadow: 0 0 10px #ffd54f88, inset 0 0 8px #ffd54f33; }
+    button.spawn.unit.rar-sr  { box-shadow: inset 0 0 6px #9ecbff33; }
+    .pf { position: relative; width: 64px; height: 64px; flex: none; }
+    .pf .portrait { display: block; width: 64px; height: 64px; }
+    .pf .portrait.ph { display: flex; align-items: center; justify-content: center; font: bold 26px sans-serif;
+               color: #000a; box-sizing: border-box; }
+    .pf:not(.has-frame) .portrait { outline: 2px solid var(--rar); }
+    .pf .rar-frame { position: absolute; left: -4px; top: -4px; width: 72px; height: 72px; pointer-events: none; }
+    .rar-ssr .pf:not(.has-frame) .portrait { box-shadow: 0 0 10px #ffd54f; }
+    .info { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 12px; }
+    .info b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tags { display: flex; align-items: center; gap: 5px; }
+    .rar-tag { font-size: 10px; font-weight: bold; color: var(--rar); border: 1px solid var(--rar); border-radius: 3px; padding: 0 4px; }
+    .class-icon.sm { width: 24px; height: 24px; }
+    .cost { margin-left: auto; font-weight: bold; color: #ffe082; }
+    .cost::before { content: '◆ '; font-size: 9px; }
+    .info small { font-size: 10px; }
+    .info small.ab { color: var(--rar); }
+    /* ---- enemy roster strip (read-only, hover for details) ---- */
+    #enemy-roster { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; align-items: center;
+                    margin-top: 10px; max-width: 1000px; font-size: 11px; }
+    .er-head { color: #f99; margin-right: 4px; }
+    .er-unit { display: flex; align-items: center; gap: 5px; padding: 2px 6px 2px 2px; border: 1px solid var(--rar);
+               border-radius: 4px; background: #241c28; cursor: help; }
+    .er-unit img, .er-ph { width: 32px; height: 32px; flex: none; }
+    .er-ph { display: flex; align-items: center; justify-content: center; font: bold 14px sans-serif; color: #000a; }
+    .er-unit span { display: flex; flex-direction: column; }
+    .er-unit small { color: var(--rar); font-size: 10px; }
+    /* ---- HUD controls over the canvas (Auto toggle, side swap) ---- */
+    #hud-ctl { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; }
+    #hud-ctl button, #swap-overlay { font: bold 12px sans-serif; padding: 5px 10px; border-radius: 5px; cursor: pointer;
+               border: 2px solid #8a93b8; background: #1c2238e6; color: #dde; }
+    #auto-btn { min-width: 92px; letter-spacing: 0.5px; }
+    #auto-btn.on { border-color: #ffd54f; color: #1c1400; background: #ffd54fe6; box-shadow: 0 0 10px #ffd54f88; }
+    #auto-btn:not(.on) { border-color: #9ecbff; }
+    #swap-overlay { margin-top: 10px; font-size: 14px; }
+    /* ability cooldown bar on spawn buttons (frontmost unit of that type) */
+    .pf .cdbar { position: absolute; left: 2px; right: 2px; bottom: 2px; height: 6px; background: #000c;
+                 border: 1px solid #0008; border-radius: 2px; overflow: hidden; pointer-events: auto; z-index: 2; }
+    .pf .cdbar i { display: block; height: 100%; width: 0; background: #9ecbff; }
+    .pf .cdbar.ready i { background: #ffd54f; }
+    .pf .cdbar.manual { box-shadow: 0 0 6px #ffd54f; animation: cdpulse 0.8s ease-in-out infinite alternate; }
+    @keyframes cdpulse { from { opacity: 0.65; } to { opacity: 1; } }
+    /* ★ badge on a spawn button: tap to cast the frontmost ready unit's ability (manual mode) */
+    .pf .castbtn { display: none; position: absolute; right: -7px; top: -7px; width: 26px; height: 26px; z-index: 3;
+                   border-radius: 50%; background: #ffd54f; color: #4e342e; font: bold 16px/26px sans-serif; text-align: center;
+                   box-shadow: 0 0 8px #ffd54f; cursor: pointer; animation: cdpulse 0.8s ease-in-out infinite alternate; }
+    .pf .castbtn::before { content: ''; position: absolute; inset: -9px; }   /* 44px tap area */
+    button.spawn.can-cast .castbtn { display: block; }
+    button.spawn.can-cast .cdbar { cursor: pointer; }
+
+    /* ---- touch / mobile basics (all screen sizes) ---- */
+    html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
+    body { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+    #wrap, #buttons, #enemy-roster, #hud-ctl, #overlay { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+    canvas { touch-action: none; }            /* taps on the battlefield never scroll / zoom */
+    button { touch-action: manipulation; }
+    .touch-only { display: none; }
+    #hud-ctl button.on#debug-btn { border-color: #ffeb3b; color: #ffeb3b; }
+    @media (pointer: coarse) {
+      #hud-ctl .touch-only { display: inline-block; }
+      #hud-ctl .touch-only.hidden { display: none !important; }
+      #hud-ctl button, #swap-overlay, #restart { min-height: 44px; min-width: 44px; }
+      #hud-ctl .touch-only { font-size: 18px; padding: 0 8px; }
+    }
+    #rotate-hint { display: none; }
+    #info-panel { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+                  background: #0008; padding: 16px; box-sizing: border-box; }
+    #info-panel .ip-box { max-width: min(520px, 92vw); background: #1c2238f5; border: 2px solid #9ecbff; border-radius: 8px;
+                  padding: 12px 14px; font-size: 13px; line-height: 1.45; color: #eef; box-shadow: 0 6px 24px #000a; }
+    #info-panel .ip-text { white-space: pre-line; }
+    #info-panel small { display: block; margin-top: 8px; color: #889; }
+
+    /* ---- compact layout: phones (landscape height <= 540px, or narrow portrait) ----
+       Battlefield scales to fit; spawn bar = one row of portrait buttons; everything fits one viewport. */
+    @media (max-height: 540px), (max-width: 760px) {
+      :root { --strip-h: 70px; --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px); }
+      body { padding: 0 var(--safe-r) 0 var(--safe-l); height: 100vh; height: 100dvh; overflow: hidden; box-sizing: border-box;
+             justify-content: flex-start; }
+      h1, #help, #enemy-roster, .faction-head, .group-head { display: none !important; }
+      #wrap { width: fit-content; max-width: 100%; }
+      canvas { border: 0; border-radius: 0; height: auto;
+               width: min(calc(100vw - var(--safe-l) - var(--safe-r)), calc((100vh - var(--strip-h)) * 2.5));
+               width: min(calc(100vw - var(--safe-l) - var(--safe-r)), calc((100dvh - var(--strip-h)) * 2.5)); }
+      #hud-ctl { top: 4px; gap: 4px; }
+      #hud-ctl button { padding: 4px 8px; font-size: 12px; background: #1c2238cc; }
+      #hud-ctl .long { display: none; }
+      #overlay-title { font-size: 30px; }
+      #overlay-sub { margin: 4px 0 8px; }
+      #buttons { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; justify-content: flex-start; justify-content: safe center; gap: 6px;
+                 margin: 4px 0 0; padding: 0 6px 4px; width: 100%; box-sizing: border-box; height: calc(var(--strip-h) - 4px);
+                 scrollbar-width: none; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x; }
+      #buttons::-webkit-scrollbar { display: none; }
+      .unit-group { display: contents; }
+      button.spawn.unit { width: 62px; height: 62px; flex: none; padding: 0; gap: 0; justify-content: center; position: relative; }
+      button.spawn.unit .pf { width: 54px; height: 54px; }
+      button.spawn.unit .pf .portrait { width: 54px; height: 54px; font-size: 22px; }
+      button.spawn.unit .pf .rar-frame { left: -3px; top: -3px; width: 60px; height: 60px; }
+      button.spawn.unit .info, button.spawn.unit .btn-frame { position: absolute; left: 2px; bottom: 8px; width: auto; height: auto;
+                 padding: 0; background: none !important; pointer-events: none; }
+      button.spawn.unit .info > b, button.spawn.unit .info > small, button.spawn.unit .tags > :not(.cost) { display: none; }
+      button.spawn.unit .cost { font-size: 11px; line-height: 13px; background: #000c; color: #ffe082; padding: 0 3px; border-radius: 3px; margin: 0; }
+      button.spawn.unit .cost::before { content: ''; }
+      .pf .castbtn { right: 1px; top: 1px; width: 28px; height: 28px; line-height: 28px; }
+      .pf .castbtn::before { inset: -4px; }
+      .pf .cdbar { height: 7px; }
+    }
+    /* Portrait phone: still playable; controls move under the battlefield; polite rotate hint. */
+    @media (orientation: portrait) and (max-width: 760px) {
+      body { overflow-y: auto; height: auto; min-height: 100dvh; }
+      #rotate-hint { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; justify-content: center;
+                     padding: 8px 10px; background: #1c2238; color: #ffe082; font-size: 13px; border-bottom: 1px solid #333a55; }
+      #rotate-hint.dismissed { display: none; }
+      #rotate-hint button { min-width: 44px; min-height: 36px; background: none; border: 1px solid #4a5580; color: #ccd; border-radius: 6px; font-size: 16px; }
+      #hud-ctl { position: static; transform: none; justify-content: center; flex-wrap: wrap; margin: 6px 0 0; }
+      #buttons { margin-top: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="rotate-hint" role="note"><span>📱 ↻ Rotate your phone for the best view (you can still play like this)</span><button type="button" aria-label="Dismiss">✕</button></div>
+  <h1>Tower Defense — Prototype</h1>
+  <div id="wrap">
+    <canvas id="stage"></canvas>
+    <div id="hud-ctl">
+      <button id="auto-btn" type="button">AUTO: OFF</button>
+      <button id="swap-btn" type="button">⇄ Swap sides</button>
+      <button id="restart-btn" class="touch-only" type="button" title="Restart (R)" aria-label="Restart">↻</button>
+      <button id="debug-btn" class="touch-only" type="button" title="Debug grid (G)" aria-label="Debug grid">#</button>
+      <button id="fs-btn" class="touch-only hidden" type="button" title="Fullscreen" aria-label="Fullscreen">⛶</button>
+    </div>
+    <div id="overlay" class="hidden">
+      <img id="overlay-banner" class="hidden" alt="">
+      <p id="overlay-title"></p>
+      <p id="overlay-sub"></p>
+      <button id="restart">Restart</button>
+      <button id="swap-overlay" type="button">⇄ Swap sides</button>
+    </div>
+  </div>
+  <div id="buttons"></div>
+  <div id="info-panel" class="hidden" role="dialog" aria-label="Unit info"><div class="ip-box"><div class="ip-text"></div><small>Tap anywhere to close</small></div></div>
+  <div id="help">Keys: 1–9 spawn units (hover a button for its ability) &nbsp;·&nbsp; Abilities: click a glowing unit or Shift+1–9 &nbsp;·&nbsp;
+    A auto-cast on/off &nbsp;·&nbsp; F swap sides &nbsp;·&nbsp; R restart &nbsp;·&nbsp; G debug grid / ranges</div>
+
+  <!-- Plain scripts, no build step: config, abilities, art manifest/loader, then game -->
+  <script src="config.js"></script>
+  <script src="abilities.js"></script>
+  <script src="assets.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
