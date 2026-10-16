@@ -234,19 +234,19 @@ const CONFIG = {
       striker:  { common: { name: 'Valkyrie Footman (placeholder)', art: 'elf_common_striker' },
                   sr:     { name: 'Dia', id: 'valkyrie_dia', spriteSize: 64,
                             ability: 'rallying_charge',
-                            hitFrame: { 4: 2, 8: 5, 12: 6 },   // Gab: 4-frame attack hits on 2; his 8-frame 128 px attack hits on 5 (4 is the smear)
+                            hitFrame: { 4: 2, 8: 4 },   // 8-frame 128 px: impact on 4
                             bio: 'Main character. Her battle cry lights up the squad.',
                             flavor: 'The youngest blade of the sisterhood. Too honest to stay quiet, too kind to stay out of the fight.' } },
       defender: { common: { name: 'Valkyrie Shieldbearer (placeholder)', art: 'elf_common_defender' },
                   sr:     { name: 'Grey', id: 'valkyrie_defender', spriteSize: 64,   // own art (Mia): valkyrie_defender_*.png
                             ability: 'grey_shield_bash',
-                            hitFrame: { 4: 2, 8: 4, 12: 5 },   // 4-frame: 2 = swing arc; Mia's 8-frame 128 px: 3 smear, 4 impact
+                            hitFrame: { 4: 2, 8: 4 },   // 4-frame: 2 = swing arc; Mia's 8-frame 128 px: 3 smear, 4 impact
                             bio: 'A young plate-armored knight with a huge round shield and a double-bladed axe.',
                             flavor: "He knocked on the Valkyries' gate every day for a year. Now nothing gets past him." } },   // Petra, STORY.md
       ranger:   { common: { name: 'Valkyrie Archer (placeholder)', art: 'elf_common_ranger' },
                   sr:     { name: 'Hera', id: 'valkyrie_ranger', spriteSize: 64,   // own art (Mia): valkyrie_ranger_*.png
                             ability: 'nimble_shot',
-                            hitFrame: { 4: 2, 8: 4, 12: 6 },   // 4-frame (13:59): 2 = release (arrow leaves); Mia's 8-frame 128 px: release on 4
+                            hitFrame: { 4: 2, 8: 4 },   // 8-frame pixel bow sheet: 0 ready,1 raise,2 draw,3 full draw,4 release (arrow spawns)
                             bio: 'Half human, half angel, with a single wing. A blunt, cheerful tomboy with a sharp eye.',
                             flavor: 'One wing, two arrows, zero patience. She never learned to fly, so she learned never to miss.' } },
     },
@@ -254,19 +254,19 @@ const CONFIG = {
       striker:  { common: { name: 'Deva Footman (placeholder)', art: 'darkelf_common_striker' },
                   sr:     { name: 'Raven', id: 'deva_raven', spriteSize: 64,
                             ability: 'dark_cloud', onHit: { lifesteal: 1 },
-                            hitFrame: { 4: 2, 8: 4, 12: 5 },   // Gab: 4-frame attack hits on 2; his 8-frame 128 px attack hits on 4
+                            hitFrame: { 4: 2, 8: 4 },   // Gab: 4-frame attack hits on 2; his 8-frame 128 px attack hits on 4
                             bio: 'Dia\'s foil. Her strikes leave a draining curse that feeds her.',
                             flavor: 'A nun who stopped believing the sermons but kept the habit. She takes what she\'s owed, one drop at a time.' } },
       defender: { common: { name: 'Deva Shieldbearer (placeholder)', art: 'darkelf_common_defender' },
                   sr:     { name: 'Brawn', id: 'deva_defender', spriteSize: 64,   // own art (Mia): deva_defender_*.png
                             ability: 'endure',
-                            hitFrame: { 4: 2, 8: 4, 12: 5 },   // 4-frame: 0-1 wind-up, 2 hit (red arc), 3 follow-through; Mia's 8-frame: hit on 4
+                            hitFrame: { 4: 2, 8: 4 },   // 4-frame: 0-1 wind-up, 2 hit (red arc), 3 follow-through; Mia's 8-frame: hit on 4
                             bio: 'A mortal ex-pit fighter with pale tattoos on both bare arms, a big shield and a spiked mace.',
                             flavor: "Every tattoo is a fight he walked away from. He's running out of room." } },   // Petra
       ranger:   { common: { name: 'Deva Archer (placeholder)', art: 'darkelf_common_ranger' },
                   sr:     { name: 'Pela', id: 'deva_ranger', spriteSize: 64,
                             ability: 'bubble_trap', projectile: 'bubble',
-                            hitFrame: { 4: 2, 8: 4, 12: 6 },   // 4-frame (13:59): 2 = release (bubble leaves); Mia's 8-frame 128 px: release on 4
+                            hitFrame: { 4: 2, 8: 4 },   // 4-frame (13:59): 2 = release (bubble leaves); Mia's 8-frame 128 px: release on 4
                             bio: 'Timid elf girl who values her friends, but gets excited causing mayhem. Fights with water bubbles.',
                             flavor: 'Shy, sweet, fiercely loyal, and a little too delighted when things go pop.' } },
     },
