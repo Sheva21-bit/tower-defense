@@ -5,12 +5,12 @@ All numbers live in `config.js`. **HP, damage per hit and AP cost come only from
 armor and abilities come from the class, plus optional roster-slot overrides (marked *). Distances are in **grids** (1 grid = 10 px; the stage is 100 grids,
 and each tower front is 6 grids from its edge). Speed is in grids per second.
 
-Factions: **Valkyries** (player, left) vs **Deva** (angels, enemy AI, right). Both have the same 9
-roster slots, so stats are mirrored. Only names, art and (for named characters) kits differ. Units
+Factions: **Valkyries** (player, left) vs **Deva** (angels, enemy AI, right). Both have the same 6
+roster slots (Common + SR; the placeholder SSR slots were removed on the boss's call, and the only SSR is Margentelle, key 0), so stats are mirrored. Only names, art and (for named characters) kits differ. Units
 marked *(placeholder)* borrow High Elf / Dark Elf art through the `art` field until their own art lands.
 The High Elf and Dark Elf factions are still in `config.js` (switch `PLAYER_FACTION` / `ENEMY_FACTION`).
 
-**Spawn menu / hotkeys are grouped by rarity:** Common = keys **1–3**, SR = **4–6**, SSR = **7–9**, each in class order
+**Spawn menu / hotkeys are grouped by rarity:** Common = keys **1–3**, SR = **4–6** (keys 7–9 are unused; Margentelle is **0**), each in class order
 Striker, Defender, Ranger (the table below is grouped by class; the Key column shows the new keys). Every portrait shows
 its rarity stars (top-left), class badge (bottom-right: red sword / blue shield / green bow) and AP cost with Mia's AP crystal (bottom-left).
 
@@ -50,13 +50,10 @@ Life Steal: 1 HP/s per stack for 5 s (true damage)**, used by Raven's hits and D
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | Striker | Common | Valkyrie Footman (`valkyrie_common_striker`) | Deva Footman (`deva_common_striker`) | 100 | 5 | 1.0 | 5.0 | 3.5 | 1.8 | 2 | none |
 | 4 | Striker | SR | **Dia** (`valkyrie_dia`) | **Raven** (`deva_raven`) | 100 | 10 | 1.0 | 10.0 | 3.5 | 1.8 | 3 | Slot default **Cleave** (hits every enemy up to 2.5 grids in front for 130% damage = 13, 5 s cooldown; used by e.g. the High/Dark Elf SR strikers). Dia: **Rallying Charge**; Raven: **Life Steal** hits + **Dark Cloud** (below). |
-| 7 | Striker | SSR | Valkyrie SSR Striker (`valkyrie_ssr_striker`) | Deva SSR Striker (`deva_ssr_striker`) | 100 | 10 | 1.0 | 10.0 | 4* | 1.8 | 5 | **Dash Strike**: dashes up to 6 grids to an enemy within 7 grids and hits it for 250% damage (25), plus 50% (5) to enemies within 1.5 grids of it. Can't dash through enemies. 8 s cooldown. |
 | 2 | Defender | Common | Valkyrie Shieldbearer (`valkyrie_common_defender`) | Deva Shieldbearer (`deva_common_defender`) | 150 | 15 | 1.6 | 9.4 | 2.2 | 1.5 | 2 | none (class traits only) |
 | 5 | Defender | SR | **Grey** (`valkyrie_defender`) | **Brawn** (`deva_defender`) | 150 | 20 | 1.6 | 12.5 | 2.2 | 1.5 | 3 | Slot default **Shield Bash** (150% damage = 30 and stuns the target for 1.5 s, 6 s cooldown; used by the High/Dark Elf SR defenders). Grey: his own **Shield Bash** charge (`grey_shield_bash`); Brawn: **Endure** (below). |
-| 8 | Defender | SSR | Valkyrie SSR Defender (`valkyrie_ssr_defender`) | Deva SSR Defender (`deva_ssr_defender`) | 150 | 20 | 1.6 | 12.5 | 2.2 | 1.5 | 5 | **Fortress**: passive aura, so allies within 4 grids (itself included) take 25% less damage. Taunt every 8 s: enemies within 5 grids that can reach it must attack it for 3 s. |
 | 3 | Ranger | Common | Valkyrie Archer (`valkyrie_common_ranger`) | Deva Archer (`deva_common_ranger`) | 75 | 10 | 1.4 | 7.1 | 3.0 | 9 | 2 | none |
 | 6 | Ranger | SR | **Hera** (`valkyrie_ranger`) | **Pela** (`deva_ranger`) | 75 | 10 | 1.4 | 7.1 | 3.0 | 10* | 3 | Slot default **Piercing Shot** (a bolt through every enemy in a line up to full range, 160% damage = 16, 6 s cooldown; used by e.g. the High/Dark Elf SR rangers). Hera: **Nimble Shot**; Pela: **Bubble Trap** (below). |
-| 9 | Ranger | SSR | Valkyrie SSR Ranger (`valkyrie_ssr_ranger`) | Deva SSR Ranger (`deva_ssr_ranger`) | 75 | 10 | 1.4 | 7.1 | 3.0 | 11* | 5 | **Arrow Rain**: hits the most crowded spot in range for 180% damage (18) to every enemy within 3 grids. 9 s cooldown. |
 
 **Defender attack interval: 1.6 s for every defender, both factions** (`CONFIG.CLASSES.defender.cooldownSec`). Boss rule:
 defenders attack less often than everyone else, so the defender interval must stay above the striker (1.0 s) and ranger

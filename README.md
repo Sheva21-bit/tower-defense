@@ -30,8 +30,8 @@ starts right away as before. `game.js` exposes `Game.start({ side, enemy, auto, 
 `Game.resume()`, `Game.started` (true once a match has begun), `Game.running`, `Game.paused`.
 
 ## Controls
-`1`–`9` spawn units, grouped by rarity: **Common 1–3, SR 4–6, SSR 7–9** (each Striker, Defender, Ranger) · `0` **Margentelle**
-(Unaffiliated SSR Bomber, her own row under SSR; `Shift`+`0` casts Infectious Love) · `R` restart ·
+`1`–`6` spawn units, grouped by rarity: **Common 1–3, SR 4–6** (each Striker, Defender, Ranger) · `0` **Margentelle**
+(Unaffiliated SSR Bomber and the only SSR, her own row; `Shift`+`0` casts Infectious Love) · `R` restart ·
 `G` debug view (grid, each unit's position and range in grids, defender zones, ability cooldowns) · `N` damage numbers on/off
 
 **Action points (AP)** (`CONFIG.AP`, same for you and the enemy AI): start with **3 AP**, gain **+1 AP/s**, max **10**. Units cost

@@ -194,7 +194,7 @@ const CONFIG = {
 
   // ---- Roster slots: the same 9 slots for every faction (stats/abilities mirror) ----
   // Order = spawn-menu order: grouped by rarity (Common, SR, SSR), each in class order
-  // (Striker, Defender, Ranger). Hotkeys follow it: Common 1-3, SR 4-6, SSR 7-9.
+  // (Striker, Defender, Ranger). Hotkeys follow it: Common 1-3, SR 4-6. Placeholder SSR slots removed (boss); the only SSR is Margentelle (neutral, key 0).
   //   overrides: optional per-slot stat overrides (final values; NOT hp / damage / cost, see STAT_STANDARD)
   //   apCost   : optional AP cost exception for this slot (default STAT_STANDARD.apCostByRarity)
   //   ability  : id from ABILITIES, or null (Commons have none)
@@ -206,9 +206,6 @@ const CONFIG = {
     { class: 'striker',  rarity: 'sr',     ability: 'cleave',        key: '4' },
     { class: 'defender', rarity: 'sr',     ability: 'shield_bash',   key: '5' },
     { class: 'ranger',   rarity: 'sr',     ability: 'piercing_shot', key: '6', overrides: { rangeGrids: 10 } },
-    { class: 'striker',  rarity: 'ssr',    ability: 'dash_strike',   key: '7', overrides: { speedGrids: 4 } },
-    { class: 'defender', rarity: 'ssr',    ability: 'fortress',      key: '8' },
-    { class: 'ranger',   rarity: 'ssr',    ability: 'arrow_rain',    key: '9', overrides: { rangeGrids: 11 } },
   ],
 
   // ---- Per-faction unit identity (ALL NAMES ARE PLACEHOLDERS until the backstory lands) ----
@@ -237,69 +234,57 @@ const CONFIG = {
       striker:  { common: { name: 'Valkyrie Footman (placeholder)', art: 'elf_common_striker' },
                   sr:     { name: 'Dia', id: 'valkyrie_dia', spriteSize: 64,
                             ability: 'rallying_charge',
-                            hitFrame: { 4: 2, 8: 5 },   // Gab: 4-frame attack hits on 2; his 8-frame 128 px attack hits on 5 (4 is the smear)
+                            hitFrame: { 4: 2, 8: 5, 12: 6 },   // Gab: 4-frame attack hits on 2; his 8-frame 128 px attack hits on 5 (4 is the smear)
                             bio: 'Main character. Her battle cry lights up the squad.',
-                            flavor: 'The youngest blade of the sisterhood. Too honest to stay quiet, too kind to stay out of the fight.' },
-                  ssr:    { name: 'Valkyrie SSR Striker (placeholder)', art: 'elf_ssr_striker' } },
+                            flavor: 'The youngest blade of the sisterhood. Too honest to stay quiet, too kind to stay out of the fight.' } },
       defender: { common: { name: 'Valkyrie Shieldbearer (placeholder)', art: 'elf_common_defender' },
                   sr:     { name: 'Grey', id: 'valkyrie_defender', spriteSize: 64,   // own art (Mia): valkyrie_defender_*.png
                             ability: 'grey_shield_bash',
-                            hitFrame: { 4: 2, 8: 4 },   // 4-frame: 2 = swing arc; Mia's 8-frame 128 px: 3 smear, 4 impact
+                            hitFrame: { 4: 2, 8: 4, 12: 5 },   // 4-frame: 2 = swing arc; Mia's 8-frame 128 px: 3 smear, 4 impact
                             bio: 'A young plate-armored knight with a huge round shield and a double-bladed axe.',
-                            flavor: "He knocked on the Valkyries' gate every day for a year. Now nothing gets past him." },   // Petra, STORY.md
-                  ssr:    { name: 'Valkyrie SSR Defender (placeholder)', art: 'elf_ssr_defender' } },
+                            flavor: "He knocked on the Valkyries' gate every day for a year. Now nothing gets past him." } },   // Petra, STORY.md
       ranger:   { common: { name: 'Valkyrie Archer (placeholder)', art: 'elf_common_ranger' },
                   sr:     { name: 'Hera', id: 'valkyrie_ranger', spriteSize: 64,   // own art (Mia): valkyrie_ranger_*.png
                             ability: 'nimble_shot',
-                            hitFrame: { 4: 2, 8: 4 },   // 4-frame (13:59): 2 = release (arrow leaves); Mia's 8-frame 128 px: release on 4
+                            hitFrame: { 4: 2, 8: 4, 12: 6 },   // 4-frame (13:59): 2 = release (arrow leaves); Mia's 8-frame 128 px: release on 4
                             bio: 'Half human, half angel, with a single wing. A blunt, cheerful tomboy with a sharp eye.',
-                            flavor: 'One wing, two arrows, zero patience. She never learned to fly, so she learned never to miss.' },
-                  ssr:    { name: 'Valkyrie SSR Ranger (placeholder)', art: 'elf_ssr_ranger' } },
+                            flavor: 'One wing, two arrows, zero patience. She never learned to fly, so she learned never to miss.' } },
     },
     deva: {
       striker:  { common: { name: 'Deva Footman (placeholder)', art: 'darkelf_common_striker' },
                   sr:     { name: 'Raven', id: 'deva_raven', spriteSize: 64,
                             ability: 'dark_cloud', onHit: { lifesteal: 1 },
-                            hitFrame: { 4: 2, 8: 4 },   // Gab: 4-frame attack hits on 2; his 8-frame 128 px attack hits on 4
+                            hitFrame: { 4: 2, 8: 4, 12: 5 },   // Gab: 4-frame attack hits on 2; his 8-frame 128 px attack hits on 4
                             bio: 'Dia\'s foil. Her strikes leave a draining curse that feeds her.',
-                            flavor: 'A nun who stopped believing the sermons but kept the habit. She takes what she\'s owed, one drop at a time.' },
-                  ssr:    { name: 'Deva SSR Striker (placeholder)', art: 'darkelf_ssr_striker' } },
+                            flavor: 'A nun who stopped believing the sermons but kept the habit. She takes what she\'s owed, one drop at a time.' } },
       defender: { common: { name: 'Deva Shieldbearer (placeholder)', art: 'darkelf_common_defender' },
                   sr:     { name: 'Brawn', id: 'deva_defender', spriteSize: 64,   // own art (Mia): deva_defender_*.png
                             ability: 'endure',
-                            hitFrame: { 4: 2, 8: 4 },   // 4-frame: 0-1 wind-up, 2 hit (red arc), 3 follow-through; Mia's 8-frame: hit on 4
+                            hitFrame: { 4: 2, 8: 4, 12: 5 },   // 4-frame: 0-1 wind-up, 2 hit (red arc), 3 follow-through; Mia's 8-frame: hit on 4
                             bio: 'A mortal ex-pit fighter with pale tattoos on both bare arms, a big shield and a spiked mace.',
-                            flavor: "Every tattoo is a fight he walked away from. He's running out of room." },   // Petra
-                  ssr:    { name: 'Deva SSR Defender (placeholder)', art: 'darkelf_ssr_defender' } },
+                            flavor: "Every tattoo is a fight he walked away from. He's running out of room." } },   // Petra
       ranger:   { common: { name: 'Deva Archer (placeholder)', art: 'darkelf_common_ranger' },
                   sr:     { name: 'Pela', id: 'deva_ranger', spriteSize: 64,
                             ability: 'bubble_trap', projectile: 'bubble',
-                            hitFrame: { 4: 2, 8: 4 },   // 4-frame (13:59): 2 = release (bubble leaves); Mia's 8-frame 128 px: release on 4
+                            hitFrame: { 4: 2, 8: 4, 12: 6 },   // 4-frame (13:59): 2 = release (bubble leaves); Mia's 8-frame 128 px: release on 4
                             bio: 'Timid elf girl who values her friends, but gets excited causing mayhem. Fights with water bubbles.',
-                            flavor: 'Shy, sweet, fiercely loyal, and a little too delighted when things go pop.' },
-                  ssr:    { name: 'Deva SSR Ranger (placeholder)', art: 'darkelf_ssr_ranger' } },
+                            flavor: 'Shy, sweet, fiercely loyal, and a little too delighted when things go pop.' } },
     },
     elf: {
       striker:  { common: { name: 'Elven Footman' },
-                  sr:     { name: 'High Elf Bladedancer', id: 'elf_striker',  spriteSize: 64 },
-                  ssr:    { name: 'Sunblade Champion' } },
+                  sr:     { name: 'High Elf Bladedancer', id: 'elf_striker',  spriteSize: 64 } },
       defender: { common: { name: 'Elven Shieldbearer' },
-                  sr:     { name: 'Aegis Warden',         id: 'elf_defender', spriteSize: 64 },
-                  ssr:    { name: 'Silver Bastion' } },
+                  sr:     { name: 'Aegis Warden',         id: 'elf_defender', spriteSize: 64 } },
       ranger:   { common: { name: 'Elven Archer' },
-                  sr:     { name: 'Sylvan Archer',        id: 'elf_ranger',   spriteSize: 64 },
-                  ssr:    { name: 'Starfall Ranger' } },
+                  sr:     { name: 'Sylvan Archer',        id: 'elf_ranger',   spriteSize: 64 } },
     },
     darkelf: {
       striker:  { common: { name: 'Dark Elf Cutthroat' },
-                  sr:     { name: 'Shadow Blade',         id: 'darkelf_striker',  spriteSize: 64 },
-                  ssr:    { name: 'Bloodmoon Reaver' } },
+                  sr:     { name: 'Shadow Blade',         id: 'darkelf_striker',  spriteSize: 64 } },
       defender: { common: { name: 'Dark Elf Shieldguard' },
-                  sr:     { name: 'Obsidian Guard',       id: 'darkelf_defender', spriteSize: 64 },
-                  ssr:    { name: 'Doomwall Sentinel' } },
+                  sr:     { name: 'Obsidian Guard',       id: 'darkelf_defender', spriteSize: 64 } },
       ranger:   { common: { name: 'Dark Elf Crossbow' },
-                  sr:     { name: 'Nightshade Archer',    id: 'darkelf_ranger',   spriteSize: 64 },
-                  ssr:    { name: 'Venomstorm Sniper' } },
+                  sr:     { name: 'Nightshade Archer',    id: 'darkelf_ranger',   spriteSize: 64 } },
     },
     // ---- Own-roster factions (see FACTIONS.ownRoster). Every entry here IS a unit. ----
     //   key        : spawn hotkey (player bar); Shift+key casts its ability

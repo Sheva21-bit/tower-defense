@@ -23,10 +23,10 @@
     howTo: [
       { h: 'The war', p: 'The Crown of Dawn holds back the dark beneath the world, and it is cracking. The Valkyries swore to guard it. The Deva, the angels who made it, have come to take it back. Their squads meet on a single lane between two towers.' },
       { h: 'Goal', p: 'Destroy the enemy tower before they destroy yours. Units walk the lane and fight whatever they meet.' },
-      { h: 'Spawning', p: 'Each unit costs action points (AP). You start with 3 AP and gain 1 every second. Desktop: keys 1–9 or click a portrait. Phone: tap a portrait.' },
+      { h: 'Spawning', p: 'Each unit costs action points (AP). You start with 3 AP and gain 1 every second. Desktop: keys 1–6 and 0, or click a portrait. Phone: tap a portrait.' },
       { h: 'Rarity', p: 'Common (1 star), SR (2 stars) and SSR (3 stars). Only 3 Commons can be alive at once per side.' },
       { h: 'Classes', p: 'Strikers (sword) hit hard up close, Defenders (shield) soak damage, Rangers (bow) attack from range.' },
-      { h: 'Abilities', p: 'SR and SSR units have an ability. When a unit shows the cyan spark, click or tap it to cast (Shift+1–9 on desktop). Turn on Auto in Settings to cast automatically.' },
+      { h: 'Abilities', p: 'SR and SSR units have an ability. When a unit shows the cyan spark, click or tap it to cast (Shift+number on desktop). Turn on Auto in Settings to cast automatically.' },
       { h: 'Unit info', p: 'Right-click a portrait (desktop) or press and hold it (phone) to read a unit\'s stats and ability.' },
       { h: 'Other keys', p: 'A auto-cast · N damage numbers · F swap sides · R restart · G debug grid.' },
     ],
