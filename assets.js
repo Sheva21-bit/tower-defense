@@ -126,7 +126,7 @@ const ASSET_MANIFEST = {
   RECOLOR_TOLERANCE: 8,         // per-channel tolerance for the magenta match
 
   // ---- Towers (96x192, base on the ground line, centred on the 6-grid footprint) --
-  TOWER_SIZE: { w: 96, h: 192 },
+  TOWER_SIZE: { w: 144, h: 288 },   // 1.5x the 96x192 art (largest that fits under the HUD); drawn nearest-neighbour
   TOWER_DAMAGED_BELOW: 0.5,     // show *_damaged below this HP fraction
   TOWERS: {
     player: {
@@ -145,6 +145,10 @@ const ASSET_MANIFEST = {
   STAGE: {
     bg:  { file: 'bg_stage1.png',     w: 1000, h: 400 },  // full canvas
     far: { file: 'bg_stage1_far.png', w: 1000, h: 300 },  // optional, drawn behind bg
+    // Animated stage layers (optional; when sky+fg load, stage_fx.js draws sky > clouds > stars > fg > water fx)
+    sky:    { file: 'bg_stage1_sky.png',    w: 1000, h: 200 },
+    fg:     { file: 'bg_stage1_fg.png',     w: 1000, h: 400 },
+    clouds: { file: 'bg_stage1_clouds.png', w: 1,    h: 1 },   // atlas; rects in stage_fx_data.js
   },
 
   // ---- Effects (optional; drawn shapes are used when missing) ----

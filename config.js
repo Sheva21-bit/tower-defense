@@ -27,7 +27,7 @@ const CONFIG = {
 
   // ---- Towers ----
   TOWER_HP: 1000,
-  TOWER_WIDTH_GRIDS: 6,     // each tower occupies this many grids at its end of the stage
+  TOWER_WIDTH_GRIDS: 9,     // each tower occupies this many grids at its end of the stage
 
   // ---- Economy: ACTION POINTS (AP), set by the boss. SAME rules for the player and the enemy AI ----
   // Each side starts with `start` AP and gains `perSec` AP per second up to `max`. AP are spent in whole

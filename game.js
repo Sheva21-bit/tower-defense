@@ -1219,11 +1219,11 @@
       if (barFrame) {
         const bw = AM.UI.towerHpbarFrame.w, bh = AM.UI.towerHpbarFrame.h;
         const bx = Math.min(Math.max(cx - bw / 2, 4), C.STAGE_WIDTH_PX - bw - 4);
-        barY = top - bh - 8;
+        barY = Math.max(top - bh - 8, 84);   // big towers: keep the bar on screen, below the AP gauge
         barCx = bx + bw / 2;
         drawFramedBar(barFrame, bx, barY, bw, bh, tower.hp / tower.maxHp, '#6f6');
       } else {
-        barY = top - 16;
+        barY = Math.max(top - 16, 84);   // big towers: below the AP gauge
         barCx = cx;
         drawBar(x + 4, barY, tw - 8, 10, tower.hp / tower.maxHp, '#6f6');
       }
@@ -2646,7 +2646,18 @@
     ctx.fillStyle = C.COLORS.sky;
     ctx.fillRect(-4, -4, LW + 8, LH + 8);
     if (far) ctx.drawImage(far, 0, 0, AM.STAGE.far.w, AM.STAGE.far.h);
-    if (bg) {
+    const skyL = ART.stage('sky'), fgL = ART.stage('fg');
+    if (skyL && fgL && window.StageFX) {
+      StageFX.draw(ctx, performance.now() / 1000, skyL, fgL, ART.stage('clouds'), LW, LH);
+      const sh = screenShakeOffset();
+      if (sh.x || sh.y) {   // shake: stretch edge strips of the full composite into the revealed gap
+        const k = ART.scaleOf(bg || fgL, LH), im = bg || fgL;
+        if (sh.x > 0) ctx.drawImage(im, 0, 0, k, im.naturalHeight, -sh.x, 0, sh.x, LH);
+        if (sh.x < 0) ctx.drawImage(im, im.naturalWidth - k, 0, k, im.naturalHeight, LW, 0, -sh.x, LH);
+        if (sh.y > 0) ctx.drawImage(im, 0, 0, im.naturalWidth, k, -4, -sh.y, LW + 8, sh.y);
+        if (sh.y < 0) ctx.drawImage(im, 0, im.naturalHeight - k, im.naturalWidth, k, -4, LH, LW + 8, -sh.y);
+      }
+    } else if (bg) {
       ctx.drawImage(bg, 0, 0, LW, LH);
       const sh = screenShakeOffset();
       if (sh.x || sh.y) {   // camera shake: repeat the bg's edge pixels into the revealed strip (no sky-coloured gap)
